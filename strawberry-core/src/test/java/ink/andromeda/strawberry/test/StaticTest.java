@@ -1,6 +1,6 @@
 package ink.andromeda.strawberry.test;
 
-import ink.andromeda.strawberry.tools.CrossOriginSQLParser;
+import ink.andromeda.strawberry.core.CrossOriginSQLParser;
 import org.junit.Test;
 
 

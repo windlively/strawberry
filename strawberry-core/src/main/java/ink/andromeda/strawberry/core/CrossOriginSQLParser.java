@@ -1,5 +1,6 @@
-package ink.andromeda.strawberry.tools;
+package ink.andromeda.strawberry.core;
 
+import ink.andromeda.strawberry.core.JoinConfig;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
@@ -45,12 +46,11 @@ public class CrossOriginSQLParser {
 
     public CrossOriginSQLParser(String originalSql) {
         Objects.requireNonNull(originalSql);
-
         if (!originalSql.matches(SQL_FORMAT_REG.pattern())) {
             throw new IllegalArgumentException("wrong sql format, " +
                                                "must like this format: SELECT * FROM s1.d1.t1 JOIN s1.d2.t2 JOIN s2.d2.t3 ON s1.d1.t1.f1 = s1.d1.t2.f1 AND s1.d2.t2.f1 = s1.d2.t3.f1 WHERE .......");
         }
-        this.originalSql = originalSql;
+        this.originalSql = originalSql.replaceAll("\\s+", " ");
     }
 
     /**
@@ -89,5 +89,26 @@ public class CrossOriginSQLParser {
         return joinConditions;
     }
 
+    public void analysis(){
+        Matcher matcher = FIND_TABLE_REG.matcher(originalSql);
+        String prevTable = null;
+        while (matcher.find()){
+            String currentTable = matcher.group().trim();
+            if(prevTable == null) {
+                prevTable = currentTable;
+                continue;
+            }
+
+            JoinConfig joinConfig = JoinConfig.builder()
+                    .leftTable(prevTable)
+                    .rightTable(currentTable)
+
+                    .build();
+
+
+
+        }
+
+    }
 
 }
