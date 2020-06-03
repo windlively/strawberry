@@ -24,7 +24,7 @@ public class GeneralTools {
 
     private final static ThreadLocal<Gson> gson = ThreadLocal.withInitial(Gson::new);
 
-    public static Gson gsonInstance(){
+    public static Gson gsonInstance() {
         return gson.get();
     }
 
@@ -193,8 +193,8 @@ public class GeneralTools {
         throw new IllegalStateException(String.format("expect one result, but found %s now: %s", result.size(), sql));
     }
 
-    public static <R> R simpleQueryOne(DataSource dataSource, String sql, Class<R> clazz, boolean autoTypeAliases) {
-        List<R> result = simpleQuery(dataSource, sql, clazz, autoTypeAliases);
+    public static <R> R simpleQueryOne(DataSource dataSource, String sql, Class<R> clazz, boolean autoTypeAliases, boolean fluentSetterMode) {
+        List<R> result = simpleQuery(dataSource, sql, clazz, autoTypeAliases, fluentSetterMode);
         if (result.size() == 0)
             return null;
         if (result.size() == 1)
@@ -203,12 +203,13 @@ public class GeneralTools {
     }
 
     /**
-     * @param dataSource      数据源
-     * @param sql             SQL查询语句
-     * @param clazz           返回的实体类类型
-     * @param autoTypeAliases 是否自动驼峰类型转换
+     * @param dataSource       数据源
+     * @param sql              SQL查询语句
+     * @param clazz            返回的实体类类型
+     * @param autoTypeAliases  是否自动驼峰类型转换
+     * @param fluentSetterMode 是否为方法名和字段名一致的setter方法
      */
-    public static <R> List<R> simpleQuery(DataSource dataSource, String sql, Class<R> clazz, boolean autoTypeAliases) {
+    public static <R> List<R> simpleQuery(DataSource dataSource, String sql, Class<R> clazz, boolean autoTypeAliases, boolean fluentSetterMode) {
         try (
                 Connection connection = dataSource.getConnection();
                 PreparedStatement preparedStatement = connection.prepareStatement(sql);
@@ -224,8 +225,10 @@ public class GeneralTools {
             // 预先加载对象的setter方法
             for (int i = 1; i <= metaData.getColumnCount(); i++) {
                 String originalName = metaData.getColumnLabel(i);
-                String setterMethodName = "set" + (autoTypeAliases ? upCaseToCamelCase(originalName, true)
-                        : originalName.charAt(0) - 32 + originalName.substring(1));
+                String setterMethodName = fluentSetterMode ?
+                        (autoTypeAliases ? upCaseToCamelCase(originalName, false) : originalName) :
+                        ("set" + (autoTypeAliases ? upCaseToCamelCase(originalName, true)
+                                : originalName.charAt(0) - 32 + originalName.substring(1)));
                 Method method = findMethod(clazz, setterMethodName, null);
                 if (method == null) {
                     log.warn("could not found method {} in {}", setterMethodName, clazz.getTypeName());

@@ -1,10 +1,14 @@
 package ink.andromeda.strawberry.entity;
 
+import ink.andromeda.strawberry.entity.po.ColumnPo;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.experimental.Accessors;
+import org.springframework.util.StringUtils;
 
 import java.util.Objects;
+
+import static ink.andromeda.strawberry.tools.GeneralTools.jdbcTypeToJavaType;
 
 @Getter
 @Accessors(fluent = true)
@@ -57,5 +61,18 @@ public class TableField {
     @Override
     public int hashCode() {
         return Objects.hash(sourceName, schemaName, tableName, name);
+    }
+
+    public static TableField fromColumnPo(ColumnPo columnPo, String sourceName){
+        return TableField.builder()
+                .name(columnPo.columnName())
+                .sourceName(sourceName)
+                .schemaName(columnPo.schemaName())
+                .tableName(columnPo.tableName())
+                .comment(columnPo.columnComment())
+                .jdbcType(columnPo.columnType())
+                .javaType(jdbcTypeToJavaType(columnPo.columnType()))
+                .isIndex(!StringUtils.isEmpty(columnPo.columnIndex()))
+                .build();
     }
 }

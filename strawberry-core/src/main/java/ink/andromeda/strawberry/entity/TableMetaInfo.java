@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.experimental.Accessors;
 
 import javax.sql.DataSource;
 
@@ -21,15 +22,16 @@ import static ink.andromeda.strawberry.tools.SQLTemplate.previewTableDataSql;
 @AllArgsConstructor
 @NoArgsConstructor
 @Data
+@Accessors(fluent = true)
 public class TableMetaInfo {
 
     private long id;
 
-    // 源表所属库
-    private String schema;
+    private String schemaName;
 
-    // 源表名称
     private String name;
+
+    private String sourceName;
 
     /**
      * 列信息:
@@ -47,7 +49,7 @@ public class TableMetaInfo {
     }
 
     public String fullName(){
-        return schema + "." + name;
+        return schemaName + "." + name;
     }
 
     /**
