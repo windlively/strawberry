@@ -11,19 +11,19 @@ import java.util.Map;
  */
 public class VirtualRelation {
 
+    private Map<String, LinkNode> linkNodeMap;
 
 
 
 
 
-
-    public static class LinkReference {
+    public static class LinkNode {
 
         private String tableName;
 
         private Map<String, List<Pair<String, String>>> prev;
 
-        private List<String> next;
+        private Map<String, List<Pair<String, String>>> next;
 
     }
 

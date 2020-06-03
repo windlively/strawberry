@@ -37,7 +37,7 @@ public class TableMetaInfo {
      * 列信息:
      * <p>列名<->列信息</p>
      */
-    private Map<String, TableField> columns;
+    private Map<String, TableField> fields;
 
     /**
      * 该表对应的数据源

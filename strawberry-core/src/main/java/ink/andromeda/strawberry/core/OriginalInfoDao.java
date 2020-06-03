@@ -40,7 +40,7 @@ public class OriginalInfoDao {
                 ColumnPo.class, true, true)
                 .stream().map(c -> TableField.fromColumnPo(c, sourceName)).collect(Collectors.toMap(e -> e.name(), e -> e));
         TABLE_META_INFO_MAP.get().put(tableFullName, TableMetaInfo.builder()
-                .columns(tableFieldMap)
+                .fields(tableFieldMap)
                 .dataSource(dataSource)
                 .name(tableName)
                 .schemaName(schemaName)
