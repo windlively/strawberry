@@ -1,7 +1,12 @@
 package ink.andromeda.strawberry.core;
 
 import ink.andromeda.strawberry.tools.Pair;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.ToString;
+import lombok.experimental.Accessors;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -11,19 +16,28 @@ import java.util.Map;
  */
 public class VirtualRelation {
 
-    private Map<String, LinkNode> linkNodeMap;
+    @Setter
+    private Map<String, VirtualNode> virtualNodeMap;
+
+    @Setter
+    private Map<String, String> tableLabelRef;
 
 
 
+    @Getter
+    @Accessors(fluent = true)
+    @ToString
+    public static class VirtualNode {
 
+        private final String tableName;
 
-    public static class LinkNode {
+        public VirtualNode(String tableName){
+            this.tableName = tableName;
+        }
 
-        private String tableName;
+        private final Map<String, List<Pair<String, String>>> prev = new HashMap<>();
 
-        private Map<String, List<Pair<String, String>>> prev;
-
-        private Map<String, List<Pair<String, String>>> next;
+        private final Map<String, List<Pair<String, String>>> next = new HashMap<>();
 
     }
 

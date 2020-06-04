@@ -273,10 +273,6 @@ public class GeneralTools {
 
     }
 
-    public static String concatString(String joiner, String... strs) {
-        return String.join(joiner, strs);
-    }
-
     public static DataSource buildDataSource(String dbName, String address, int port, String userName, String password) throws SQLException {
         Objects.requireNonNull(address);
         Assert.isTrue(port != 0, "data base port could not be 0!");

@@ -1,7 +1,6 @@
 package ink.andromeda.strawberry.tools;
 
 import java.util.Map;
-import java.util.Objects;
 
 public interface Pair<L, R> extends Map.Entry<L, R>{
 
@@ -36,18 +35,6 @@ public interface Pair<L, R> extends Map.Entry<L, R>{
     @Override
     default R getValue() {
         return getRight();
-    }
-
-    @Override
-    default boolean equals(Object o) {
-        return this == o ||
-               (o instanceof Pair && Objects.equals(((Pair<?, ?>) o).getLeft(), this.getLeft())
-                && Objects.equals(((Pair<?, ?>) o).getRight(), this.getRight()));
-    }
-
-    @Override
-    default int hashCode() {
-        return Objects.hash(getLeft(), getRight());
     }
 
 }

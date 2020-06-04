@@ -50,4 +50,16 @@ public class ImmutablePair<L, R> implements Pair<L, R>{
     public String toString() {
         return toJSONString(this);
     }
+
+    @Override
+    public boolean equals(Object o) {
+        return this == o ||
+               (o instanceof Pair && Objects.equals(((Pair<?, ?>) o).getLeft(), this.getLeft())
+                && Objects.equals(((Pair<?, ?>) o).getRight(), this.getRight()));
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(getLeft(), getRight());
+    }
 }
