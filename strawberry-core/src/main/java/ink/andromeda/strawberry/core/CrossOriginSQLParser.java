@@ -193,8 +193,8 @@ public class CrossOriginSQLParser {
     }
 
     private void addJoinField(VirtualRelation.VirtualNode left, VirtualRelation.VirtualNode right, String leftField, String rightField){
-        left.next().computeIfAbsent(right.tableName(), k -> new ArrayList<>()).add(Pair.of(leftField, rightField));
-        right.prev().computeIfAbsent(left.tableName(), k -> new ArrayList<>()).add(Pair.of(leftField, rightField));
+        left.next().computeIfAbsent(right.tableName(), k -> new ArrayList<>()).add(Pair.of(left.tableName() + "." + leftField, right.tableName() + "." + rightField));
+        right.prev().computeIfAbsent(left.tableName(), k -> new ArrayList<>()).add(Pair.of(left.tableName() + "." + leftField, right.tableName() + "." + rightField));
     }
 
     private Map<String, List<String>> getWhereCase(){

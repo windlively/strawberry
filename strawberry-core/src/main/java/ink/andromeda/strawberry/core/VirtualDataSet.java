@@ -163,12 +163,12 @@ public class VirtualDataSet {
         index = distinctIndexName(index);
         log.info(Arrays.deepToString(index));
         List<Map<String, Object>> result = new ArrayList<>();
+        Map<String, Map<IndexKey, List<Map<String, Object>>>> indexMap = new HashMap<>(index.length);
         try(
                 Connection connection = dataSource.getConnection();
                 PreparedStatement statement = connection.prepareStatement(SQL.toString());
                 ResultSet resultSet = statement.executeQuery();
                 ) {
-            Map<String, Map<IndexKey, List<Map<String, Object>>>> indexMap = new HashMap<>(index.length);
             ResultSetMetaData metaData = resultSet.getMetaData();
             int columnCount = metaData.getColumnCount();
             String[] labelNames = new String[columnCount + 1];
