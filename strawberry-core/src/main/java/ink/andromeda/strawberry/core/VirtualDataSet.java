@@ -12,7 +12,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StopWatch;
 
 import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -76,7 +81,7 @@ public class VirtualDataSet {
         this.virtualRelation = virtualRelation;
     }
 
-    public void executeQuery(String sql) {
+    public void executeQuery(String sql) throws Exception{
         StopWatch stopWatch = new StopWatch("execute sql query");
 
         stopWatch.start("parser sql");
@@ -91,8 +96,89 @@ public class VirtualDataSet {
         String drivingTable = analysisDrivingTable(virtualRelation);
         stopWatch.stop();
 
+        Map<String, VirtualRelation.VirtualNode> virtualNodeMap = virtualRelation.getVirtualNodeMap();
+        Set<String> remainTables = virtualNodeMap.keySet();
+
+        stopWatch.start("execute");
+        List<Map<String, Object>> drivingData = getDrivingData(drivingTable, virtualRelation);
+        remainTables.remove(drivingTable);
+
+
+        executeQuery(drivingTable, drivingData, virtualNodeMap, virtualRelation, remainTables);
+        stopWatch.stop();
 
         log.info(stopWatch.prettyPrint());
+    }
+
+
+    private void executeQuery(String currentTable,
+                              List<Map<String, Object>> currentData,
+                              Map<String, VirtualRelation.VirtualNode> virtualNodeMap,
+                              VirtualRelation relation,
+                              Set<String> remainTables){
+
+
+
+    }
+
+    private List<Map<String, Object>> getDrivingData(String tableLabelName, VirtualRelation relation) {
+        String tableFullName = relation.getTableLabelRef().get(tableLabelName);
+        String[] splitTableFullName = splitTableFullName(tableFullName);
+        String source = splitTableFullName[0];
+        String schema = splitTableFullName[1];
+        String tableName = splitTableFullName[2];
+
+        DataSource dataSource = getNonNullDataSource(source);
+        StringBuilder SQL = new StringBuilder("SELECT * FROM ").append(schema).append(".").append(tableName).append(" WHERE ");
+        List<String> wheres = Objects.requireNonNull(relation.getWhereCases().get(tableLabelName));
+        String conditions = toSQLCondition(tableLabelName, tableName, wheres);
+        SQL.append(conditions);
+        log.info(SQL.toString());
+        VirtualRelation.VirtualNode node = relation.getVirtualNodeMap().get(tableLabelName);
+
+        /*
+        * 获取索引字段
+        *
+        *
+        *                   index fields is -------------------------and---------------------
+        *                                              |                                    |
+        *                                              V                                    V
+        *                                        ----------------                    ---------------
+        *                                        |              |                    |             |
+        * prev_table0 (left_fields)<--------------(right_fields)-----Current Node-----(left_fields)-------------->(right_fields) next_table0
+        *                                        |              |    |         |     |             |
+        *                                        |              |    |         |     |             |
+        * prev_table1 (left_fields)<--------------(right_fields)------         -------(left_fields)-------------->(right_fields) next_table1
+        *                                        |              |                    |             |
+        *                      .                 |              |                    |             |        .
+        *                      .                 |              |                    |             |        .
+        *                      .                 |              |                    |             |        .
+        *                  (or more)             |              |                    |             |    (or more)
+        *                                        ----------------                    ---------------
+        *
+        *
+        * */
+        String[][] index = Stream.concat(node.prev().values().stream().map(s -> s.stream().map(Pair::getRight)),
+                node.next().values().stream().map(s -> s.stream().map(Pair::getLeft)))
+                .map(s -> s.toArray(String[]::new))
+                .toArray(String[][]::new);
+        // 索引去重
+        index = distinctIndexName(index);
+        log.info(Arrays.deepToString(index));
+
+        try(
+                Connection connection = dataSource.getConnection();
+                PreparedStatement statement = connection.prepareStatement(SQL.toString());
+                ResultSet resultSet = statement.executeQuery();
+                ) {
+
+
+
+        }catch (Exception ex){
+            throw new IllegalStateException("exception in execute sql: " + SQL, ex);
+        }
+
+        return simpleQuery(dataSource, SQL.toString());
     }
 
     /**
@@ -185,9 +271,9 @@ public class VirtualDataSet {
     private String[][] distinctIndexName(String[][] compositeIndex) {
         // String[]比较时不会比较内部的元素, 将其连接为字符串去重后再还原
         return Stream.of(compositeIndex)
-                .map(s -> String.join("::", s))
+                .map(s -> String.join(":", s))
                 .distinct()
-                .map(s -> s.split("::"))
+                .map(s -> s.split(":"))
                 .toArray(String[][]::new);
     }
 
@@ -220,28 +306,35 @@ public class VirtualDataSet {
      */
     private String analysisDrivingTable(VirtualRelation relation) {
         CountDownLatch countDownLatch = new CountDownLatch(relation.getWhereCases().size());
-        TreeSet<Pair<String, Long>> record = new TreeSet<>(Comparator.comparingLong(Pair::getRight));
+
+        // 会有多线程竞争的bug, TreeSet非线程安全
+        // TreeSet<Pair<String, Long>> record = new TreeSet<>(Comparator.comparingLong(Pair::getRight));
+
+        Map<Long, String> record = new ConcurrentHashMap<>(relation.getWhereCases().size());
+
         // 遍历所有表的条件组, 多线程方式
         relation.getWhereCases().forEach((k, v) -> {
             SIMPLE_TASK_POOL_EXECUTOR.submit(() -> {
                 try {
                     // 获取表的全名
                     String tableFullName = relation.getTableLabelRef().get(k);
-                    // 获取数据源名称
-                    String sourceName = tableFullName.substring(0, tableFullName.indexOf('.'));
-                    // 获取出去数据源名称前缀的表名
-                    String tableName = tableFullName.substring(tableFullName.indexOf('.') + 1);
+
+                    String[] splitTableFullName = splitTableFullName(tableFullName);
+                    String sourceName = splitTableFullName[0];
+                    String schemaName = splitTableFullName[1];
+                    String tableName = splitTableFullName[2];
                     // 获取数据源实例
                     DataSource dataSource = getNonNullDataSource(sourceName);
                     // 获取查询时的sql where条件语句
                     String sqlCondition = toSQLCondition(k, tableName, v);
                     // 生成explain SQL
-                    String explainSQL = SQLTemplate.explainResultSql(tableName, sqlCondition);
+                    String explainSQL = SQLTemplate.explainResultSql(schemaName + "." + tableName, sqlCondition);
                     log.info(explainSQL);
                     Map<String, Object> result = simpleQueryOne(dataSource, explainSQL);
                     if (result != null) {
                         Long rows = conversionService().convert(result.get("rows"), Long.class);
-                        record.add(Pair.of(k, rows));
+                        record.put(rows, k);
+                        // record.add(Pair.of(k, rows));
                     }
                 } catch (Exception ex) {
                     log.error("error in analysis driving table: {}", ex.toString(), ex);
@@ -256,12 +349,19 @@ public class VirtualDataSet {
             e.printStackTrace();
             log.error(e.toString(), e);
         }
-        if (record.size() == 0) {
+        // 扫描行数最小的即为驱动表
+        long minRows = Long.MAX_VALUE;
+        for (long l : record.keySet()){
+            if(l < minRows) {
+                minRows = l;
+            }
+        }
+        if (minRows == Long.MAX_VALUE) {
             throw new IllegalStateException("could not find minimum scan rows for relation: " + relation);
         }
-        // 扫描行数最小的即为驱动表
-        String result = record.last().getLeft();
-        log.info("find driving table: {}, may scan rows: {}", result, record.last().getValue());
+
+        String result = record.get(minRows);
+        log.info("find driving table: {}, may scan rows: {}", result, minRows);
         return result;
     }
 
@@ -272,5 +372,13 @@ public class VirtualDataSet {
     private static String toSQLCondition(String tableLabelName, String correctTableName, List<String> whereCases) {
         return whereCases.stream().map(c -> c.replaceAll("^\\s*\\b" + tableLabelName + "\\b", correctTableName))
                 .collect(Collectors.joining(" AND ", " ", " "));
+    }
+
+    private String[] splitTableFullName(String tableFullName){
+        String[] strings = tableFullName.split("\\.");
+        if(strings.length != 3){
+            throw new IllegalArgumentException("invalid table full name: " + tableFullName + "', which need like {source}.{schema}.{table}");
+        }
+        return strings;
     }
 }

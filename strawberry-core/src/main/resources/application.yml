@@ -9,7 +9,7 @@ strawberry:
       validation-timeout: 18800
     - pool-name: capital
       driver-class-name: com.mysql.cj.jdbc.Driver
-      jdbc-url: jdbc:mysql://sql-pproxysql01cn.svc.wecash.net:3306/
+      jdbc-url: jdbc:mysql://sql-pproxysql01cn.svc.wecash.net:3306/?zeroDateTimeBehavior=convertToNull
       password: vI6DolOMw1lpszN
       username: wudelong320
       connection-test-query: SELECT 1
