@@ -12,10 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StopWatch;
 
 import javax.sql.DataSource;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.sql.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -165,15 +162,28 @@ public class VirtualDataSet {
         // 索引去重
         index = distinctIndexName(index);
         log.info(Arrays.deepToString(index));
-
+        List<Map<String, Object>> result = new ArrayList<>();
         try(
                 Connection connection = dataSource.getConnection();
                 PreparedStatement statement = connection.prepareStatement(SQL.toString());
                 ResultSet resultSet = statement.executeQuery();
                 ) {
+            Map<String, Map<IndexKey, List<Map<String, Object>>>> indexMap = new HashMap<>(index.length);
+            ResultSetMetaData metaData = resultSet.getMetaData();
+            int columnCount = metaData.getColumnCount();
+            String[] labelNames = new String[columnCount + 1];
+            for (int i = 1; i <= columnCount; i++) {
+                labelNames[i] = tableLabelName + "." + metaData.getColumnName(i);
+            }
 
-
-
+            while (resultSet.next()){
+                Map<String, Object> object = new HashMap<>(columnCount);
+                for (int i = 1; i <= columnCount; i++) {
+                    object.put(labelNames[i], resultSet.getObject(i));
+                }
+                buildIndex(index, indexMap, object);
+                result.add(object);
+            }
         }catch (Exception ex){
             throw new IllegalStateException("exception in execute sql: " + SQL, ex);
         }
@@ -244,22 +254,24 @@ public class VirtualDataSet {
 
         private final String name;
 
-        private Map<String, Map<IndexKey, List<Map<String, Object>>>> index = new HashMap<>(4);
+        private final String[][] indexField;
+
+        private final Map<String, Map<IndexKey, List<Map<String, Object>>>> index = new HashMap<>(4);
+
+        private final List<Map<String,Object>> data = new ArrayList<>(32);
 
         public List<Map<String, Object>> getMatchData(String indexName, IndexKey indexKey) {
             return Objects.requireNonNull(index.get(indexName)).get(indexKey);
         }
 
-        public void addIndexData(String indexName, IndexKey indexKey, Map<String, Object> data) {
-
+        public void add(Map<String, Object> object){
+            this.data.add(object);
+            buildIndex(indexField, index, object);
         }
 
-        @Setter
-        @Getter
-        private List<Map<String, Object>> data;
-
-        private OriginalResultSet(String name) {
+        private OriginalResultSet(String name, String[][] indexField) {
             this.name = name;
+            this.indexField = distinctIndexName(indexField);
         }
     }
 
@@ -268,7 +280,7 @@ public class VirtualDataSet {
         return Stream.of(index).distinct().toArray(String[]::new);
     }
 
-    private String[][] distinctIndexName(String[][] compositeIndex) {
+    private static String[][] distinctIndexName(String[][] compositeIndex) {
         // String[]比较时不会比较内部的元素, 将其连接为字符串去重后再还原
         return Stream.of(compositeIndex)
                 .map(s -> String.join(":", s))
@@ -285,7 +297,7 @@ public class VirtualDataSet {
                     .computeIfAbsent(object.get(iFields), k -> new ArrayList<>(8)).add(object);
     }
 
-    private void buildIndex(String[][] compositeIndex,
+    private static void buildIndex(String[][] compositeIndex,
                             Map<String, Map<IndexKey, List<Map<String, Object>>>> compositeIndexMap,
                             Map<String, Object> object) {
         for (String[] index : compositeIndex) {
