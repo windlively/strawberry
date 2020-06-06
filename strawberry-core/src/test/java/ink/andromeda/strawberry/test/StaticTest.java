@@ -35,7 +35,8 @@ public class StaticTest {
         stopWatch.stop();
         log.info(stopWatch.prettyPrint());
         log.info(toJSONString(relation));
-
     }
+
+
 
 }

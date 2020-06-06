@@ -27,7 +27,7 @@ public class CrossOriginSQLParser {
      */
     private final static Pattern SQL_FORMAT_REG =
             Pattern.compile("\\s*((?i)SELECT)\\s+.+\\s+((?i)FROM)\\s+(\\w+(\\.\\w+){2})\\s+((?i)AS\\s+)?\\w+\\s+(\\s*(((?i)JOIN)\\s+(\\w+(\\.\\w+){2}))\\s+((?i)AS\\s+)?\\w+\\s+" +
-                            "((?i)ON)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+))\\s+(\\s*((?i)AND)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+)))*)+\\s+((?i)WHERE).*");
+                            "((?i)ON)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+))(\\s+((?i)AND)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+)))*)+\\s+((?i)WHERE).*");
 
     /**
      * 获取表名的正则
@@ -82,7 +82,7 @@ public class CrossOriginSQLParser {
         Objects.requireNonNull(sql);
         this.sql = sql.replaceAll("[\\t\\n\\r\\f]", " ");
         if (!sql.matches(SQL_FORMAT_REG.pattern())) {
-            throw new IllegalArgumentException("wrong sql format");
+            throw new IllegalArgumentException("wrong sql format: " + sql);
         }
     }
 
@@ -182,7 +182,7 @@ public class CrossOriginSQLParser {
         }
         virtualRelation.setTableLabelRef(tableNameRef);
         virtualRelation.setVirtualNodeMap(virtualNodeMap);
-        getWhereCase();
+        virtualRelation.setWhereCases(getWhereCase());
         return virtualRelation;
     }
 

@@ -17,11 +17,16 @@ import java.util.Map;
 public class VirtualRelation {
 
     @Setter
+    @Getter
     private Map<String, VirtualNode> virtualNodeMap;
 
     @Setter
+    @Getter
     private Map<String, String> tableLabelRef;
 
+    @Setter
+    @Getter
+    private Map<String, List<String>> whereCases;
 
 
     @Getter

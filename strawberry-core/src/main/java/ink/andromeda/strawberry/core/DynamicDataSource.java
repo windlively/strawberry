@@ -24,12 +24,15 @@ public class DynamicDataSource extends AbstractDataSource implements DisposableB
 
     private final ThreadLocal<String> currentLookupKey = ThreadLocal.withInitial(() -> "master");
 
+    @Getter
     private final Map<Object, DataSource> includedDataSource = new ConcurrentHashMap<>();
 
     public DynamicDataSource(DataSource defaultDataSource, Map<Object, DataSource> includedDataSource){
         addIncludedDataSource(includedDataSource);
         setDefaultDataSource(defaultDataSource);
     }
+
+    public DynamicDataSource(){}
 
     public DynamicDataSource(DataSource defaultDataSource){
         setDefaultDataSource(defaultDataSource);
