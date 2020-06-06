@@ -3,13 +3,22 @@ package ink.andromeda.strawberry.core;
 
 import ink.andromeda.strawberry.entity.IndexKey;
 import ink.andromeda.strawberry.entity.TableMetaInfo;
+import ink.andromeda.strawberry.tools.GeneralTools;
+import ink.andromeda.strawberry.tools.Pair;
+import ink.andromeda.strawberry.tools.SQLTemplate;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.util.StopWatch;
 
 import javax.sql.DataSource;
 import java.util.*;
+import java.util.concurrent.CountDownLatch;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import static ink.andromeda.strawberry.core.StrawberryService.SIMPLE_TASK_POOL_EXECUTOR;
+import static ink.andromeda.strawberry.tools.GeneralTools.*;
 
 /**
  * 数据集
@@ -67,13 +76,23 @@ public class VirtualDataSet {
         this.virtualRelation = virtualRelation;
     }
 
-    public VirtualDataSet() {}
+    public void executeQuery(String sql) {
+        StopWatch stopWatch = new StopWatch("execute sql query");
 
-    public void executeQuery(String sql){
+        stopWatch.start("parser sql");
         CrossOriginSQLParser crossOriginSQLParser = new CrossOriginSQLParser(sql);
-        VirtualRelation virtualRelation = crossOriginSQLParser.analysis();
-        analysisDrivingTable(virtualRelation);
+        stopWatch.stop();
 
+        stopWatch.start("analysis relation");
+        VirtualRelation virtualRelation = crossOriginSQLParser.analysis();
+        stopWatch.stop();
+
+        stopWatch.start("analysis driving table");
+        String drivingTable = analysisDrivingTable(virtualRelation);
+        stopWatch.stop();
+
+
+        log.info(stopWatch.prettyPrint());
     }
 
     /**
@@ -141,11 +160,11 @@ public class VirtualDataSet {
 
         private Map<String, Map<IndexKey, List<Map<String, Object>>>> index = new HashMap<>(4);
 
-        public List<Map<String, Object>> getMatchData(String indexName, IndexKey indexKey){
+        public List<Map<String, Object>> getMatchData(String indexName, IndexKey indexKey) {
             return Objects.requireNonNull(index.get(indexName)).get(indexKey);
         }
 
-        public void addIndexData(String indexName, IndexKey indexKey, Map<String, Object> data){
+        public void addIndexData(String indexName, IndexKey indexKey, Map<String, Object> data) {
 
         }
 
@@ -157,7 +176,6 @@ public class VirtualDataSet {
             this.name = name;
         }
     }
-
 
 
     private String[] distinctIndexName(String[] index) {
@@ -193,15 +211,66 @@ public class VirtualDataSet {
         }
     }
 
-    private String analysisDrivingTable(VirtualRelation relation){
-
-        relation.getTableLabelRef().forEach((k, v) -> {
-            String sourceName = v.substring(0, v.indexOf('.'));
-            String tableName = v.substring(v.indexOf('.') + 1);
-
+    /**
+     * 找出驱动表, 即从哪一张表开始查询
+     *
+     * @param relation 表连接关系
+     * @return 驱动表的表明(别名)
+     * @throws IllegalStateException 无法找到驱动表
+     */
+    private String analysisDrivingTable(VirtualRelation relation) {
+        CountDownLatch countDownLatch = new CountDownLatch(relation.getWhereCases().size());
+        TreeSet<Pair<String, Long>> record = new TreeSet<>(Comparator.comparingLong(Pair::getRight));
+        // 遍历所有表的条件组, 多线程方式
+        relation.getWhereCases().forEach((k, v) -> {
+            SIMPLE_TASK_POOL_EXECUTOR.submit(() -> {
+                try {
+                    // 获取表的全名
+                    String tableFullName = relation.getTableLabelRef().get(k);
+                    // 获取数据源名称
+                    String sourceName = tableFullName.substring(0, tableFullName.indexOf('.'));
+                    // 获取出去数据源名称前缀的表名
+                    String tableName = tableFullName.substring(tableFullName.indexOf('.') + 1);
+                    // 获取数据源实例
+                    DataSource dataSource = getNonNullDataSource(sourceName);
+                    // 获取查询时的sql where条件语句
+                    String sqlCondition = toSQLCondition(k, tableName, v);
+                    // 生成explain SQL
+                    String explainSQL = SQLTemplate.explainResultSql(tableName, sqlCondition);
+                    log.info(explainSQL);
+                    Map<String, Object> result = simpleQueryOne(dataSource, explainSQL);
+                    if (result != null) {
+                        Long rows = conversionService().convert(result.get("rows"), Long.class);
+                        record.add(Pair.of(k, rows));
+                    }
+                } catch (Exception ex) {
+                    log.error("error in analysis driving table: {}", ex.toString(), ex);
+                } finally {
+                    countDownLatch.countDown();
+                }
+            });
         });
-
-        return null;
+        try {
+            countDownLatch.await();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+            log.error(e.toString(), e);
+        }
+        if (record.size() == 0) {
+            throw new IllegalStateException("could not find minimum scan rows for relation: " + relation);
+        }
+        // 扫描行数最小的即为驱动表
+        String result = record.last().getLeft();
+        log.info("find driving table: {}, may scan rows: {}", result, record.last().getValue());
+        return result;
     }
 
+    private DataSource getNonNullDataSource(String sourceName) {
+        return Objects.requireNonNull(this.dataSourceMap.get(sourceName), "data source '" + sourceName + "' is null!");
+    }
+
+    private static String toSQLCondition(String tableLabelName, String correctTableName, List<String> whereCases) {
+        return whereCases.stream().map(c -> c.replaceAll("^\\s*\\b" + tableLabelName + "\\b", correctTableName))
+                .collect(Collectors.joining(" AND ", " ", " "));
+    }
 }

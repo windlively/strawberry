@@ -34,7 +34,7 @@ public class ContextServiceTest {
                      "JOIN capital.capital.zfpt_user_repayment_plan zurp ON co.channel_order_no=zurp.channel_order_no " +
                      "JOIN mobile_card.mobile_card.mcc_customer_consume mcc ON mcc.sequence_number = zurp.channel_order_no " +
                      "WHERE zurp.channel_order_no = '' AND mcc.repayment_status=2";
-        VirtualDataSet virtualDataSet = new VirtualDataSet();
+        VirtualDataSet virtualDataSet = new VirtualDataSet(0, "ss", null, null);
 
         virtualDataSet.setDataSourceMap(dynamicDataSource.getIncludedDataSource());
 

@@ -16,7 +16,7 @@ public class SQLTemplate {
             "WHERE TABLE_SCHEMA = '%s'\n" +
             "  AND TABLE_NAME = '%s';";
 
-    private final static String EXPLAIN_SQL_TEMPLATE = "EXPLAIN SELECT * FROM %s";
+    private final static String EXPLAIN_SQL_TEMPLATE = "EXPLAIN SELECT * FROM %s WHERE %s";
 
     /**
      * 预览表数据的SQL
@@ -29,8 +29,8 @@ public class SQLTemplate {
         return String.format(FIND_COLUMN_INFO_SQL_TEMPLATE, schemaName, tableName);
     }
 
-    public static String explainResultSql(String tableName){
-        return String.format(EXPLAIN_SQL_TEMPLATE, tableName);
+    public static String explainResultSql(String tableName, String whereCases){
+        return String.format(EXPLAIN_SQL_TEMPLATE, tableName, whereCases);
     }
 
 }

@@ -34,8 +34,8 @@ public class StrawberryAutoConfiguration {
         Map<Object, DataSource> dataSourceMap = new HashMap<>();
         strawberryProperties.getDataSourceList().forEach(hikariConfig -> {
             String sourceName = Objects.requireNonNull(hikariConfig.getPoolName(), "source name(pool name) could be not null");
-            HikariDataSource dataSource = new HikariDataSource(hikariConfig);
             try {
+                HikariDataSource dataSource = new HikariDataSource(hikariConfig);
                 testDataSourceConnection(dataSource);
                 dataSourceMap.put(sourceName, dataSource);
             } catch (SQLException e) {

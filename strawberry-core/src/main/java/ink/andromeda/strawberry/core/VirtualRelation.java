@@ -10,6 +10,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static ink.andromeda.strawberry.tools.GeneralTools.toJSONString;
+
 /**
  * 数据集内部原始表之间的关系
  *
@@ -46,4 +48,8 @@ public class VirtualRelation {
 
     }
 
+    @Override
+    public String toString() {
+        return toJSONString(this);
+    }
 }

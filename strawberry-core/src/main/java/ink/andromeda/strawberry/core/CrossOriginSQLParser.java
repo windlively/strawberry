@@ -65,7 +65,7 @@ public class CrossOriginSQLParser {
      */
     private final static Pattern FIND_JOIN_CLAUSE_REG =
             Pattern.compile("(((\\bJOIN\\b)\\s+(\\w+(\\.\\w+){2}))\\s+((?i)AS\\s+)?\\w+\\s+" +
-                                                                        "((?i)ON)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+))\\s+(\\s*((?i)AND)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+)))*)\\s+(?=JOIN|WHERE\\s+)", Pattern.CASE_INSENSITIVE);
+                                                                        "((?i)ON)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+))(\\s+((?i)AND)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+)))*)\\s+(?=JOIN|WHERE\\s+)", Pattern.CASE_INSENSITIVE);
 
     /**
      * 截取SQL的WHERE条件部分
