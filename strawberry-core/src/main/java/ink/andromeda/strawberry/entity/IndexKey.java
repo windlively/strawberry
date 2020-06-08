@@ -1,14 +1,27 @@
 package ink.andromeda.strawberry.entity;
 
+import ink.andromeda.strawberry.tools.GeneralTools;
+import lombok.Getter;
+import lombok.experimental.Accessors;
+
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * 以具体值为索引的key, 数据需要顺序一致
  */
+@Accessors(fluent = true)
 public class IndexKey {
 
+    @Getter
     private final Object[] values;
+
+    public String toSQLString(){
+        return Stream.of(values).map(GeneralTools::javaObjectToSQLStringValue)
+                .collect(Collectors.joining(", "));
+    }
 
     private IndexKey(Object[] values) {
         Objects.requireNonNull(values);

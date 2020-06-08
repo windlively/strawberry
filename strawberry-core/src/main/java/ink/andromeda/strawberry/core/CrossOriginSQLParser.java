@@ -81,8 +81,8 @@ public class CrossOriginSQLParser {
     public CrossOriginSQLParser(String sql) {
         Objects.requireNonNull(sql);
         this.sql = sql.replaceAll("[\\t\\n\\r\\f]", " ");
-        if (!sql.matches(SQL_FORMAT_REG.pattern())) {
-            throw new IllegalArgumentException("wrong sql format: " + sql);
+        if (!this.sql.matches(SQL_FORMAT_REG.pattern())) {
+            throw new IllegalArgumentException("wrong sql format: " + this.sql);
         }
     }
 

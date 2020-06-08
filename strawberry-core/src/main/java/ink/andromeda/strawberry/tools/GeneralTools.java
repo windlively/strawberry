@@ -122,6 +122,10 @@ public class GeneralTools {
         }
     }
 
+    public static String subStringAt(String str, char startChar){
+        return str.substring(str.indexOf(startChar) + 1);
+    }
+
     // 数据库类型对应的Java类型
     public static Class<?> jdbcTypeToJavaType(String columnType) {
         switch (columnType) {
