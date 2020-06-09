@@ -3,6 +3,7 @@ package ink.andromeda.strawberry.core;
 import ink.andromeda.strawberry.tools.Pair;
 import lombok.extern.slf4j.Slf4j;
 
+import java.lang.reflect.Field;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -128,6 +129,7 @@ public class CrossOriginSQLParser {
 
         String prevTable;
         VirtualRelation virtualRelation = new VirtualRelation();
+        List<String> fields = new ArrayList<>(32);
         Map<String, VirtualRelation.VirtualNode> virtualNodeMap = new HashMap<>();
         // k: 表别名, v: 原表全名
         Map<String, String> tableNameRef = new HashMap<>(4);

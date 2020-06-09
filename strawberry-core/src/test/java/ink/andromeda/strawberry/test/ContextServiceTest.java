@@ -33,7 +33,7 @@ public class ContextServiceTest {
         String sql = "SELECT * FROM master.core_system.core_order co " +
                      "JOIN capital.capital.zfpt_user_repayment_plan zurp ON co.channel_order_no=zurp.channel_order_no AND co.period =zurp.period " +
                      "JOIN mobile_card.mobile_card.mcc_customer_consume mcc ON mcc.sequence_number = co.channel_order_no  " +
-                     "WHERE zurp.channel_order_no IN ('LOAN360API2019011630081596979',\n" +
+                     "WHERE mcc.repayment_status=2 AND zurp.channel_order_no IN ('LOAN360API2019011630081596979',\n" +
                      "'RONG3602019011629092362260',\n" +
                      "'ZZD_SD2019011691444772331',\n" +
                      "'JDQ2019011629165068163',\n" +

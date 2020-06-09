@@ -99,8 +99,13 @@ public class VirtualDataSet {
         Set<String> remainTables = new HashSet<>(virtualNodeMap.keySet());
 
         stopWatch.start("execute");
-        List<Map<String, Object>> result = startQuery(drivingTable, virtualRelation, remainTables, limit);
+        List<String> fs = new ArrayList<>(virtualRelation.getTableLabelRef().keySet());
+        Set<String> fields = new TreeSet<>();
+        List<Map<String, Object>> result = startQuery(drivingTable, virtualRelation, remainTables, fields, limit);
         stopWatch.stop();
+
+        VirtualResultSet resultSet = new VirtualResultSet(sql, result, fields);
+        // log.info(resultSet.toString());
         log.info("data size: {}", result.size());
         log.info(stopWatch.prettyPrint());
     }
@@ -112,6 +117,7 @@ public class VirtualDataSet {
                               AtomicReference<List<Map<String, Object>>> currentData,
                               OriginalResultSet refData,
                               VirtualRelation relation,
+                              Set<String> fields,
                               Set<String> remainTables) {
         if (!remainTables.contains(currentTableLabelName))
             return;
@@ -164,6 +170,7 @@ public class VirtualDataSet {
             String[] labelNames = new String[columnCount + 1];
             for (i = 1; i <= columnCount; i++) {
                 labelNames[i] = currentTableLabelName + "." + metaData.getColumnName(i);
+                fields.add(labelNames[i]);
             }
             while (resultSet.next()) {
                 Map<String, Object> object = new HashMap<>(columnCount);
@@ -206,10 +213,11 @@ public class VirtualDataSet {
         log.info(SQL.toString());
         VirtualRelation.VirtualNode currentNode = relation.getVirtualNodeMap().get(currentTableLabelName);
         currentData.set(newResult);
-        recursiveQuery(currentNode, currentData, relation, originalResultSet, remainTables);
+        recursiveQuery(currentNode, currentData, relation, originalResultSet, fields, remainTables);
     }
 
-    private List<Map<String, Object>> startQuery(String startTableLabelName, VirtualRelation relation, Set<String> remainTables, int limit) {
+    private List<Map<String, Object>> startQuery(String startTableLabelName, VirtualRelation relation,
+                                                 Set<String> remainTables, Set<String> fields, int limit) {
         String tableFullName = relation.getTableLabelRef().get(startTableLabelName);
         String[] splitTableFullName = splitTableFullName(tableFullName);
         String source = splitTableFullName[0];
@@ -244,6 +252,7 @@ public class VirtualDataSet {
                 String[] labelNames = new String[columnCount + 1];
                 for (int i = 1; i <= columnCount; i++) {
                     labelNames[i] = startTableLabelName + "." + metaData.getColumnName(i);
+                    fields.add(labelNames[i]);
                 }
                 while (resultSet.next()) {
                     Map<String, Object> object = new HashMap<>(columnCount);
@@ -260,7 +269,7 @@ public class VirtualDataSet {
             VirtualRelation.VirtualNode currentNode = relation.getVirtualNodeMap().get(startTableLabelName);
 
             remainTables.remove(startTableLabelName);
-            recursiveQuery(currentNode, currentData, relation, originalResultSet, new HashSet<>(remainTables));
+            recursiveQuery(currentNode, currentData, relation, originalResultSet, fields, new HashSet<>(remainTables));
             result.addAll(currentData.get());
 
             if (MAX_RESULT_LENGTH > 0 && result.size() > MAX_RESULT_LENGTH) {
@@ -277,19 +286,30 @@ public class VirtualDataSet {
         return result;
     }
 
+    /**
+     * 递归查询数据
+     *
+     * @param currentNode  当前节点(表名)
+     * @param currentData  已查询出的数据
+     * @param relation     SQL语句的内联关系
+     * @param refData      与当前节点Join的数据
+     * @param fields       结果集的字段
+     * @param remainTables 剩余未查询的表
+     */
     private void recursiveQuery(VirtualRelation.VirtualNode currentNode,
                                 AtomicReference<List<Map<String, Object>>> currentData,
                                 VirtualRelation relation,
                                 OriginalResultSet refData,
+                                Set<String> fields,
                                 Set<String> remainTables) {
         Map<String, List<Pair<String, String>>> nextList = currentNode.next();
         Map<String, List<Pair<String, String>>> prevList = currentNode.prev();
         if (!nextList.isEmpty()) {
-            nextList.forEach((tableLabel, joinFields) -> executeQuery(tableLabel, true, joinFields, currentData, refData, relation, remainTables));
+            nextList.forEach((tableLabel, joinFields) -> executeQuery(tableLabel, true, joinFields, currentData, refData, relation, fields, remainTables));
         }
 
         if (!prevList.isEmpty()) {
-            prevList.forEach((tableLabel, joinFields) -> executeQuery(tableLabel, false, joinFields, currentData, refData, relation, remainTables));
+            prevList.forEach((tableLabel, joinFields) -> executeQuery(tableLabel, false, joinFields, currentData, refData, relation, fields, remainTables));
         }
     }
 
