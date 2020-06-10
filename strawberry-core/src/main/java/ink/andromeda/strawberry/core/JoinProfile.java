@@ -5,7 +5,9 @@ import ink.andromeda.strawberry.entity.TableField;
 import ink.andromeda.strawberry.tools.Pair;
 import lombok.*;
 import lombok.experimental.Accessors;
+import org.springframework.util.Assert;
 
+import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 
@@ -17,11 +19,11 @@ public class JoinProfile {
     private final JoinType joinType;
 
     @Getter
-    private final Set<Pair<TableField, TableField>> joinFields;
+    private final Set<Pair<String, String>> joinFields = new HashSet<>();
 
-    public JoinProfile(JoinType joinType, Set<Pair<TableField, TableField>> joinFields) {
+    public JoinProfile(JoinType joinType) {
+        Assert.notNull(joinType);
         this.joinType = joinType;
-        this.joinFields = joinFields;
     }
 
 

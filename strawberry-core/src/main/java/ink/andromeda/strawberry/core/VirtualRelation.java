@@ -42,9 +42,9 @@ public class VirtualRelation {
             this.tableName = tableName;
         }
 
-        private final Map<String, List<Pair<String, String>>> prev = new HashMap<>();
+        private final Map<String, JoinProfile> prev = new HashMap<>();
 
-        private final Map<String, List<Pair<String, String>>> next = new HashMap<>();
+        private final Map<String, JoinProfile> next = new HashMap<>();
 
     }
 

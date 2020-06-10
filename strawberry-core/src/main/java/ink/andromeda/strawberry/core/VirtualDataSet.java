@@ -2,6 +2,7 @@ package ink.andromeda.strawberry.core;
 
 
 import ink.andromeda.strawberry.entity.IndexKey;
+import ink.andromeda.strawberry.entity.JoinType;
 import ink.andromeda.strawberry.entity.TableMetaInfo;
 import ink.andromeda.strawberry.tools.Pair;
 import ink.andromeda.strawberry.tools.SQLTemplate;
@@ -20,6 +21,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static ink.andromeda.strawberry.core.StrawberryService.SIMPLE_TASK_POOL_EXECUTOR;
+import static ink.andromeda.strawberry.entity.JoinType.JOIN;
 import static ink.andromeda.strawberry.tools.GeneralTools.*;
 
 /**
@@ -70,6 +72,8 @@ public class VirtualDataSet {
 
     private static final int MAX_RESULT_LENGTH = 20000;
 
+    public final static String $_LINE_NUMBER_STR = "$LINE_NUMBER";
+
     public VirtualDataSet(long id,
                           String name,
                           Map<String, TableMetaInfo> originalTables,
@@ -105,15 +109,35 @@ public class VirtualDataSet {
         stopWatch.stop();
 
         VirtualResultSet resultSet = new VirtualResultSet(sql, result, fields);
-        // log.info(resultSet.toString());
+        log.info(resultSet.toString());
         log.info("data size: {}", result.size());
         log.info(stopWatch.prettyPrint());
     }
 
 
+    // 执行join操作时的标识符
+
+    /**
+     * 只保留能join到的数据
+     */
+    private final static byte INNER_JOIN = 0;
+    /**
+     * 保留两边全部数据
+     */
+    private final static byte FULL_JOIN = 1;
+    /**
+     * 以已连接数据为主
+     */
+    private final static byte MASTER_AS_JOINED_DATA = 2;
+    /**
+     * 以待连接的数据为准
+     */
+    private final static byte MASTER_AS_WAITING_JOIN_DATA = 3;
+
+
     private void executeQuery(String currentTableLabelName,
                               boolean asRight,
-                              List<Pair<String, String>> joinFieldPairs,
+                              JoinProfile joinProfile,
                               AtomicReference<List<Map<String, Object>>> currentData,
                               OriginalResultSet refData,
                               VirtualRelation relation,
@@ -130,6 +154,8 @@ public class VirtualDataSet {
         DataSource dataSource = getNonNullDataSource(source);
         StringBuilder SQL = new StringBuilder("SELECT * FROM " + schema + "." + tableName + " WHERE ");
 
+
+        Set<Pair<String, String>> joinFieldPairs = joinProfile.joinFields();
         List<String> joinFields = asRight ? joinFieldPairs.stream().map(Pair::getRight).collect(Collectors.toList()) :
                 joinFieldPairs.stream().map(Pair::getLeft).collect(Collectors.toList());
 
@@ -172,14 +198,14 @@ public class VirtualDataSet {
                 labelNames[i] = currentTableLabelName + "." + metaData.getColumnName(i);
                 fields.add(labelNames[i]);
             }
+            int lineNumber = 0;
             while (resultSet.next()) {
                 Map<String, Object> object = new HashMap<>(columnCount);
                 for (i = 1; i <= columnCount; i++) {
                     object.put(labelNames[i], resultSet.getObject(i));
                 }
-                originalResultSet.add(object);
+                originalResultSet.add(object, lineNumber++);
             }
-
         } catch (SQLException ex) {
             ex.printStackTrace();
         }
@@ -194,19 +220,36 @@ public class VirtualDataSet {
         }
         String indexName = String.join(":",
                 joinFieldPairs.stream().map(p -> asRight ? p.getRight() : p.getLeft()).toArray(String[]::new));
-        Map<IndexKey, List<Map<String, Object>>> indexMap = Objects.requireNonNull(originalResultSet.index.get(indexName));
+        /*
+         * 执行join操作
+         *
+         */
+        Map<IndexKey, List<Object[]>> indexMap = Objects.requireNonNull(originalResultSet.index.get(indexName));
+        JoinType joinType = joinProfile.joinType();
+        byte joinIdentifier = getJoinIdentifier(asRight, joinType);
+        boolean[] processedData = new boolean[originalResultSet.data.size()];
         for (Map<String, Object> current : currentData.get()) {
             Object[] val = Stream.of(refJoinFields).map(current::get).toArray();
             IndexKey indexKey = IndexKey.of(val);
-            List<Map<String, Object>> joinData = Optional.ofNullable(indexMap.get(indexKey)).orElse(Collections.emptyList());
+            List<Object[]> joinData = Optional.ofNullable(indexMap.get(indexKey)).orElse(Collections.emptyList());
             if (joinData.size() == 0 && !hasQueryParam) {
-                newResult.add(current);
+                if (joinIdentifier == FULL_JOIN || joinIdentifier == MASTER_AS_JOINED_DATA)
+                    newResult.add(current);
             }
             if (joinData.size() >= 1) {
-                for (Map<String, Object> joinDataItem : joinData) {
-                    current.putAll(joinDataItem);
+                for (Object[] joinDataItem : joinData) {
+                    //noinspection unchecked
+                    current.putAll((Map<String, ?>) joinDataItem[0]);
                     newResult.add(current);
+                    processedData[(int) joinDataItem[1]] = true;
                 }
+            }
+        }
+        if(joinIdentifier == MASTER_AS_WAITING_JOIN_DATA || joinIdentifier == FULL_JOIN){
+            for (int j = 0; j < processedData.length; j++) {
+                if(!processedData[j])
+                    //noinspection unchecked
+                    newResult.add((Map<String, Object>) originalResultSet.data.get(j)[0]);
             }
         }
         remainTables.remove(currentTableLabelName);
@@ -242,6 +285,7 @@ public class VirtualDataSet {
             start += baseQueryCount;
             log.info("driving data query: {}", currentSQL);
             int dataCount = 0;
+            List<Map<String, Object>> drivingData = new ArrayList<>();
             try (
                     Connection connection = dataSource.getConnection();
                     PreparedStatement statement = connection.prepareStatement(currentSQL);
@@ -259,13 +303,14 @@ public class VirtualDataSet {
                     for (int i = 1; i <= columnCount; i++) {
                         object.put(labelNames[i], resultSet.getObject(i));
                     }
-                    originalResultSet.add(object);
+                    originalResultSet.add(object, 0);
+                    drivingData.add(object);
                     dataCount++;
                 }
             } catch (Exception ex) {
                 throw new IllegalStateException("exception in execute sql: " + SQL, ex);
             }
-            AtomicReference<List<Map<String, Object>>> currentData = new AtomicReference<>(originalResultSet.data);
+            AtomicReference<List<Map<String, Object>>> currentData = new AtomicReference<>(drivingData);
             VirtualRelation.VirtualNode currentNode = relation.getVirtualNodeMap().get(startTableLabelName);
 
             remainTables.remove(startTableLabelName);
@@ -302,8 +347,8 @@ public class VirtualDataSet {
                                 OriginalResultSet refData,
                                 Set<String> fields,
                                 Set<String> remainTables) {
-        Map<String, List<Pair<String, String>>> nextList = currentNode.next();
-        Map<String, List<Pair<String, String>>> prevList = currentNode.prev();
+        Map<String, JoinProfile> nextList = currentNode.next();
+        Map<String, JoinProfile> prevList = currentNode.prev();
         if (!nextList.isEmpty()) {
             nextList.forEach((tableLabel, joinFields) -> executeQuery(tableLabel, true, joinFields, currentData, refData, relation, fields, remainTables));
         }
@@ -336,8 +381,8 @@ public class VirtualDataSet {
          *
          *
          * */
-        return Stream.concat(node.prev().values().stream().map(s -> s.stream().map(Pair::getRight)),
-                node.next().values().stream().map(s -> s.stream().map(Pair::getLeft)))
+        return Stream.concat(node.prev().values().stream().map(s -> s.joinFields().stream().map(Pair::getRight)),
+                node.next().values().stream().map(s -> s.joinFields().stream().map(Pair::getLeft)))
                 .map(s -> s.toArray(String[]::new))
                 .toArray(String[][]::new);
     }
@@ -409,17 +454,21 @@ public class VirtualDataSet {
 
         private final String[][] indexField;
 
-        private final Map<String, Map<IndexKey, List<Map<String, Object>>>> index;
+        private final Map<String, Map<IndexKey, List<Object[]>>> index;
 
-        private final List<Map<String, Object>> data = new ArrayList<>(32);
+        private final List<Object[]> data = new ArrayList<>(32);
 
-        public List<Map<String, Object>> getMatchData(String indexName, IndexKey indexKey) {
-            return Objects.requireNonNull(index.get(indexName)).get(indexKey);
+        public List<Object[]> getMatchData(String indexName, IndexKey indexKey) {
+            return Optional.ofNullable(
+                    Objects.requireNonNull(this.index.get(indexName),
+                            "index name '" + indexName + "' is not exist").get(indexKey))
+                    .orElse(Collections.emptyList());
         }
 
-        public void add(Map<String, Object> object) {
-            this.data.add(object);
-            buildIndex(indexField, index, object);
+        public void add(Map<String, Object> object, int lineNumber) {
+            Object[] obj = new Object[]{object, lineNumber};
+            this.data.add(obj);
+            buildIndex(indexField, index, obj);
         }
 
         private OriginalResultSet(String name, String[][] indexField) {
@@ -461,11 +510,12 @@ public class VirtualDataSet {
                     .computeIfAbsent(object.get(iFields), k -> new ArrayList<>(8)).add(object);
     }
 
+    @SuppressWarnings("unchecked")
     private static void buildIndex(String[][] compositeIndex,
-                                   Map<String, Map<IndexKey, List<Map<String, Object>>>> compositeIndexMap,
-                                   Map<String, Object> object) {
+                                   Map<String, Map<IndexKey, List<Object[]>>> compositeIndexMap,
+                                   Object[] object) {
         for (String[] index : compositeIndex) {
-            Object[] val = Stream.of(index).map(object::get).toArray();
+            Object[] val = Stream.of(index).map(o -> (((Map<String, Object>) object[0]).get(o))).toArray();
             String indexName = String.join(":", index);
             IndexKey indexKey = IndexKey.of(val);
             compositeIndexMap.computeIfAbsent(indexName, k -> new HashMap<>(16))
@@ -550,11 +600,26 @@ public class VirtualDataSet {
                 .collect(Collectors.joining(" AND ", " ", " "));
     }
 
-    private String[] splitTableFullName(String tableFullName) {
+    private static String[] splitTableFullName(String tableFullName) {
         String[] strings = tableFullName.split("\\.");
         if (strings.length != 3) {
             throw new IllegalArgumentException("invalid table full name: " + tableFullName + "', which need like {source}.{schema}.{table}");
         }
         return strings;
+    }
+
+    /**
+     * 判断连接时的标识符
+     *
+     * @param asRight  是否作为右侧表
+     * @param joinType 连接类型
+     */
+    private static byte getJoinIdentifier(boolean asRight, JoinType joinType) {
+        if (joinType == JoinType.JOIN)
+            return INNER_JOIN;
+        if (joinType == JoinType.FULL_JOIN)
+            return FULL_JOIN;
+        return asRight && joinType == JoinType.RIGHT_JOIN || !asRight && joinType == JoinType.LEFT_JOIN
+                ? MASTER_AS_WAITING_JOIN_DATA : MASTER_AS_JOINED_DATA;
     }
 }
