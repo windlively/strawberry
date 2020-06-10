@@ -145,6 +145,25 @@ public class VirtualDataSet {
                               Set<String> remainTables) {
         if (!remainTables.contains(currentTableLabelName))
             return;
+        VirtualRelation.VirtualNode currentNode = relation.getVirtualNodeMap().get(currentTableLabelName);
+
+        Set<Pair<String, String>> joinFieldPairs = joinProfile.joinFields();
+        JoinType joinType = joinProfile.joinType();
+        byte joinIdentifier = getJoinIdentifier(asRight, joinType);
+        boolean hasQueryParam = relation.getWhereCases().get(currentTableLabelName) != null;
+
+
+        if(refData.data.isEmpty()){
+            if (hasQueryParam
+                || joinIdentifier == INNER_JOIN
+                || joinIdentifier == MASTER_AS_WAITING_JOIN_DATA) {
+                // remainTables.clear();
+                currentData.get().clear();
+            }
+            remainTables.remove(currentTableLabelName);
+            recursiveQuery(currentNode, currentData, relation, refData, fields, remainTables);
+            return;
+        }
         String tableFullName = relation.getTableLabelRef().get(currentTableLabelName);
         String[] splitTableFullName = splitTableFullName(tableFullName);
         String source = splitTableFullName[0];
@@ -154,14 +173,11 @@ public class VirtualDataSet {
         DataSource dataSource = getNonNullDataSource(source);
         StringBuilder SQL = new StringBuilder("SELECT * FROM " + schema + "." + tableName + " WHERE ");
 
-
-        Set<Pair<String, String>> joinFieldPairs = joinProfile.joinFields();
         List<String> joinFields = asRight ? joinFieldPairs.stream().map(Pair::getRight).collect(Collectors.toList()) :
                 joinFieldPairs.stream().map(Pair::getLeft).collect(Collectors.toList());
 
         String[] refJoinFields = asRight ? joinFieldPairs.stream().map(Pair::getLeft).toArray(String[]::new) :
                 joinFieldPairs.stream().map(Pair::getRight).toArray(String[]::new);
-
 
         StringBuilder[] joinStatements = new StringBuilder[joinFieldPairs.size()];
         int i = 0;
@@ -176,7 +192,6 @@ public class VirtualDataSet {
         }
 
         SQL.append(String.join(" AND ", joinStatements));
-        boolean hasQueryParam = relation.getWhereCases().get(currentTableLabelName) != null;
         if (hasQueryParam) {
             SQL.append(" AND ");
             SQL.append(toSQLCondition(currentTableLabelName, tableName, relation.getWhereCases().get(currentTableLabelName)));
@@ -212,50 +227,44 @@ public class VirtualDataSet {
 
         List<Map<String, Object>> newResult = new ArrayList<>(currentData.get().size());
         if (originalResultSet.data.isEmpty()) {
-            if (hasQueryParam) {
-                remainTables.clear();
-                currentData.get().clear();
-            }
-            return;
-        }
-        String indexName = String.join(":",
-                joinFieldPairs.stream().map(p -> asRight ? p.getRight() : p.getLeft()).toArray(String[]::new));
-        /*
-         * 执行join操作
-         *
-         */
-        Map<IndexKey, List<Object[]>> indexMap = Objects.requireNonNull(originalResultSet.index.get(indexName));
-        JoinType joinType = joinProfile.joinType();
-        byte joinIdentifier = getJoinIdentifier(asRight, joinType);
-        boolean[] processedData = new boolean[originalResultSet.data.size()];
-        for (Map<String, Object> current : currentData.get()) {
-            Object[] val = Stream.of(refJoinFields).map(current::get).toArray();
-            IndexKey indexKey = IndexKey.of(val);
-            List<Object[]> joinData = Optional.ofNullable(indexMap.get(indexKey)).orElse(Collections.emptyList());
-            if (joinData.size() == 0 && !hasQueryParam) {
-                if (joinIdentifier == FULL_JOIN || joinIdentifier == MASTER_AS_JOINED_DATA)
-                    newResult.add(current);
-            }
-            if (joinData.size() >= 1) {
-                for (Object[] joinDataItem : joinData) {
-                    //noinspection unchecked
-                    current.putAll((Map<String, ?>) joinDataItem[0]);
-                    newResult.add(current);
-                    processedData[(int) joinDataItem[1]] = true;
+
+        }else {
+            String indexName = String.join(":",
+                    joinFieldPairs.stream().map(p -> asRight ? p.getRight() : p.getLeft()).toArray(String[]::new));
+            /*
+             * 执行join操作
+             *
+             */
+            Map<IndexKey, List<Object[]>> indexMap = Objects.requireNonNull(originalResultSet.index.get(indexName));
+            boolean[] processedData = new boolean[originalResultSet.data.size()];
+            for (Map<String, Object> current : currentData.get()) {
+                Object[] val = Stream.of(refJoinFields).map(current::get).toArray();
+                IndexKey indexKey = IndexKey.of(val);
+                List<Object[]> joinData = Optional.ofNullable(indexMap.get(indexKey)).orElse(Collections.emptyList());
+                if (joinData.size() == 0 && !hasQueryParam) {
+                    if (joinIdentifier == FULL_JOIN || joinIdentifier == MASTER_AS_JOINED_DATA)
+                        newResult.add(current);
+                }
+                if (joinData.size() >= 1) {
+                    for (Object[] joinDataItem : joinData) {
+                        //noinspection unchecked
+                        current.putAll((Map<String, ?>) joinDataItem[0]);
+                        newResult.add(current);
+                        processedData[(int) joinDataItem[1]] = true;
+                    }
                 }
             }
-        }
-        if(joinIdentifier == MASTER_AS_WAITING_JOIN_DATA || joinIdentifier == FULL_JOIN){
-            for (int j = 0; j < processedData.length; j++) {
-                if(!processedData[j])
-                    //noinspection unchecked
-                    newResult.add((Map<String, Object>) originalResultSet.data.get(j)[0]);
+            if (joinIdentifier == MASTER_AS_WAITING_JOIN_DATA || joinIdentifier == FULL_JOIN) {
+                for (int j = 0; j < processedData.length; j++) {
+                    if (!processedData[j])
+                        //noinspection unchecked
+                        newResult.add((Map<String, Object>) originalResultSet.data.get(j)[0]);
+                }
             }
+            currentData.set(newResult);
         }
         remainTables.remove(currentTableLabelName);
         log.info(SQL.toString());
-        VirtualRelation.VirtualNode currentNode = relation.getVirtualNodeMap().get(currentTableLabelName);
-        currentData.set(newResult);
         recursiveQuery(currentNode, currentData, relation, originalResultSet, fields, remainTables);
     }
 
@@ -285,7 +294,7 @@ public class VirtualDataSet {
             start += baseQueryCount;
             log.info("driving data query: {}", currentSQL);
             int dataCount = 0;
-            List<Map<String, Object>> drivingData = new ArrayList<>();
+            List<Map<String, Object>> drivingData = new ArrayList<>(16);
             try (
                     Connection connection = dataSource.getConnection();
                     PreparedStatement statement = connection.prepareStatement(currentSQL);

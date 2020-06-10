@@ -33,7 +33,7 @@ public class ContextServiceTest {
         String sql = "SELECT * FROM master.core_system.core_order co " +
                      " left JOIN capital.capital.zfpt_user_repayment_plan zurp ON co.channel_order_no=zurp.channel_order_no AND co.period =zurp.period " +
                      " full JOIN mobile_card.mobile_card.mcc_customer_consume mcc ON mcc.sequence_number = co.channel_order_no  " +
-                     "WHERE co.channel_order_no IN ('LOAN360API2019011630081596979',\n" +
+                     "WHERE mcc.repayment_status = 2 AND co.channel_order_no IN ('LOAN360API2019011630081596979',\n" +
                      "'RONG3602019011629092362260',\n" +
                      "'ZZD_SD2019011691444772331',\n" +
                      "'JDQ2019011629165068163',\n" +
@@ -206,4 +206,17 @@ public class ContextServiceTest {
         virtualDataSet.executeQuery(sql, 800);
     }
 
+    @Test
+    public void joinTest2() throws Exception {
+        String sql = "select * from master.test.join_test_a ta " +
+                     "left join master.test.join_test_b tb on ta.f1=tb.f2 " +
+                     //"join master.test.join_test_a td on td.f1=tb.f2 " +
+                     " join master.test.join_test_c tc on tc.f1=tb.f1 " +
+                     "where ta.f1=0";
+        log.info(sql);
+        VirtualDataSet virtualDataSet = new VirtualDataSet(0, "ss", null, null);
+        virtualDataSet.setDataSourceMap(dynamicDataSource.getIncludedDataSource());
+        // virtualDataSet.setBaseQueryCount(50);
+        virtualDataSet.executeQuery(sql, 800);
+    }
 }

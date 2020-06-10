@@ -1,0 +1,30 @@
+strawberry:
+  data-source-list:
+#    - pool-name: master
+#      driver-class-name: com.mysql.cj.jdbc.Driver
+#      jdbc-url: jdbc:mysql://10.41.95.208:3306/
+#      password: eeBk3O49b8NK975qpmTmSSmV46pKoC
+#      username: app_core_rw
+#      connection-test-query: SELECT 1
+#      validation-timeout: 18800
+#    - pool-name: capital
+#      driver-class-name: com.mysql.cj.jdbc.Driver
+#      jdbc-url: jdbc:mysql://sql-pproxysql01cn.svc.wecash.net:3306/?zeroDateTimeBehavior=convertToNull
+#      password: vI6DolOMw1lpszN
+#      username: wudelong320
+#      connection-test-query: SELECT 1
+#      validation-timeout: 18800
+#    - pool-name: mobile_card
+#      driver-class-name: com.mysql.cj.jdbc.Driver
+#      jdbc-url: jdbc:mysql://sql-pproxysql01cn.svc.wecash.net:3306/
+#      password: JPppNLpFjUA3FTI
+#      username: baijunhan3145
+#      connection-test-query: SELECT 1
+#      validation-timeout: 18800
+    - pool-name: master
+      driver-class-name: com.mysql.cj.jdbc.Driver
+      jdbc-url: jdbc:mysql://127.0.0.1:3306/?serverTimezone=Asia/Shanghai
+      password: 58603924715
+      username: root
+      connection-test-query: SELECT 1
+      validation-timeout: 18800
