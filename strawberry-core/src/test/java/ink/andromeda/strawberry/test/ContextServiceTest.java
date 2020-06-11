@@ -1,15 +1,17 @@
 package ink.andromeda.strawberry.test;
 
 import ink.andromeda.strawberry.core.DynamicDataSource;
-import ink.andromeda.strawberry.core.StrawberryAutoConfiguration;
-import ink.andromeda.strawberry.core.StrawberryService;
-import ink.andromeda.strawberry.core.VirtualDataSet;
+import ink.andromeda.strawberry.context.MetaInfoDao;
+import ink.andromeda.strawberry.context.StrawberryAutoConfiguration;
+import ink.andromeda.strawberry.context.StrawberryService;
+import ink.andromeda.strawberry.core.*;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.junit4.SpringRunner;
+import org.springframework.util.StopWatch;
 
 @RunWith(SpringRunner.class)
 @SpringBootTest(classes = StrawberryAutoConfiguration.class)
@@ -22,6 +24,9 @@ public class ContextServiceTest {
     @Autowired
     DynamicDataSource dynamicDataSource;
 
+    @Autowired
+    MetaInfoDao metaInfoDao;
+
     @Test
     public void test(){
 
@@ -31,8 +36,8 @@ public class ContextServiceTest {
     public void joinQueryTest() throws Exception {
 
         String sql = "SELECT * FROM master.core_system.core_order co " +
-                     " left JOIN capital.capital.zfpt_user_repayment_plan zurp ON co.channel_order_no=zurp.channel_order_no AND co.period =zurp.period " +
-                     " full JOIN mobile_card.mobile_card.mcc_customer_consume mcc ON mcc.sequence_number = co.channel_order_no  " +
+                     " JOIN capital.capital.zfpt_user_repayment_plan zurp ON co.channel_order_no=zurp.channel_order_no AND co.period =zurp.period " +
+                     " JOIN mobile_card.mobile_card.mcc_customer_consume mcc ON mcc.sequence_number = co.channel_order_no  " +
                      "WHERE mcc.repayment_status = 2 AND co.channel_order_no IN ('LOAN360API2019011630081596979',\n" +
                      "'RONG3602019011629092362260',\n" +
                      "'ZZD_SD2019011691444772331',\n" +
@@ -199,24 +204,31 @@ public class ContextServiceTest {
                      "'SDN2019011619958291719',\n" +
                      "'ZZD_SD2019011628030896495',\n" +
                      "'ZZD_SD2019011620045468649')";
-        VirtualDataSet virtualDataSet = new VirtualDataSet(0, "ss", null, null);
+        CrossSourceQueryEngine crossSourceQueryEngine =
+                new CrossSourceQueryEngine(s -> metaInfoDao.getTableMetaInfo(s), s -> dynamicDataSource.getDataSource(s));
 
-        virtualDataSet.setDataSourceMap(dynamicDataSource.getIncludedDataSource());
         // virtualDataSet.setBaseQueryCount(50);
-        virtualDataSet.executeQuery(sql, 800);
+        StopWatch stopWatch = new StopWatch("query");
+        stopWatch.start();
+        VirtualResultSet resultSet = crossSourceQueryEngine.executeQuery(sql);
+        stopWatch.stop();
+        log.info(resultSet.toString());
+        log.info(stopWatch.prettyPrint());
+        log.info("size: " + resultSet.getSize());
+
     }
 
     @Test
     public void joinTest2() throws Exception {
-        String sql = "select * from master.test.join_test_a ta " +
-                     "left join master.test.join_test_b tb on ta.f1=tb.f2 " +
-                     //"join master.test.join_test_a td on td.f1=tb.f2 " +
-                     " join master.test.join_test_c tc on tc.f1=tb.f1 " +
-                     "where ta.f1=0";
+        String sql = "select * from test.test.join_test_a ta " +
+                     " right join test.test.join_test_b tb on ta.f1=tb.f2 " +
+                     //"join test.test.join_test_a td on td.f1=tb.f2 " +
+                     " left join test.test.join_test_c tc on tc.f3=tb.f2 " +
+                     "where tb.f1=0";
         log.info(sql);
-        VirtualDataSet virtualDataSet = new VirtualDataSet(0, "ss", null, null);
-        virtualDataSet.setDataSourceMap(dynamicDataSource.getIncludedDataSource());
-        // virtualDataSet.setBaseQueryCount(50);
-        virtualDataSet.executeQuery(sql, 800);
+        CrossSourceQueryEngine crossSourceQueryEngine =
+                new CrossSourceQueryEngine(s -> metaInfoDao.getTableMetaInfo(s), s -> dynamicDataSource.getDataSource(s));
+
+        crossSourceQueryEngine.executeQuery(sql);
     }
 }

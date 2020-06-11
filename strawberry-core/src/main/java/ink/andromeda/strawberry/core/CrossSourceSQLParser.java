@@ -2,6 +2,7 @@ package ink.andromeda.strawberry.core;
 
 import ink.andromeda.strawberry.entity.JoinType;
 import ink.andromeda.strawberry.tools.Pair;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.lang.reflect.Field;
@@ -17,7 +18,7 @@ import static ink.andromeda.strawberry.tools.GeneralTools.toJSONString;
  * 跨数据源sql解析工具
  */
 @Slf4j
-public class CrossOriginSQLParser {
+public class CrossSourceSQLParser {
 
     /**
      * 校验SQL格式的正则, 所给的SQL语句必须为如下格式:
@@ -77,11 +78,12 @@ public class CrossOriginSQLParser {
 
     private final static Pattern FIND_JOIN_TYPE_REG = Pattern.compile("(?i)((\\bLEFT|RIGHT|OUTER|FULL\\b)\\s+)?\\bJOIN\\b");
 
+    @Getter
     private final String sql;
 
     private List<String> tables;
 
-    public CrossOriginSQLParser(String sql) {
+    public CrossSourceSQLParser(String sql) {
         Objects.requireNonNull(sql);
         this.sql = sql.replaceAll("[\\t\\n\\r\\f]", " ");
         if (!this.sql.matches(SQL_FORMAT_REG.pattern())) {

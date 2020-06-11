@@ -1,5 +1,6 @@
-package ink.andromeda.strawberry.core;
+package ink.andromeda.strawberry.context;
 
+import ink.andromeda.strawberry.core.DynamicDataSource;
 import ink.andromeda.strawberry.entity.TableField;
 import ink.andromeda.strawberry.entity.TableMetaInfo;
 import ink.andromeda.strawberry.entity.po.ColumnPo;
@@ -13,14 +14,14 @@ import static ink.andromeda.strawberry.tools.GeneralTools.simpleQuery;
 import static ink.andromeda.strawberry.tools.SQLTemplate.findColumnInfoSql;
 
 @Service
-public class OriginalInfoDao {
+public class MetaInfoDao {
 
     private final DynamicDataSource dynamicDataSource;
 
     private static final ThreadLocal<Map<String, TableMetaInfo>> TABLE_META_INFO_MAP =
             ThreadLocal.withInitial(WeakHashMap::new);
 
-    public OriginalInfoDao(DynamicDataSource dynamicDataSource) {
+    public MetaInfoDao(DynamicDataSource dynamicDataSource) {
         this.dynamicDataSource = dynamicDataSource;
     }
 
@@ -36,11 +37,14 @@ public class OriginalInfoDao {
         String schemaName = strings[1];
         String tableName = strings[2];
         DataSource dataSource = getDataSource(sourceName);
-        Map<String, TableField> tableFieldMap = simpleQuery(dataSource, findColumnInfoSql(schemaName, tableName),
-                ColumnPo.class, true, true)
-                .stream().map(c -> TableField.fromColumnPo(c, sourceName)).collect(Collectors.toMap(e -> e.name(), e -> e));
+        List<ColumnPo> columnPoList = simpleQuery(dataSource, findColumnInfoSql(schemaName, tableName),
+                ColumnPo.class, true, true);
+
         TABLE_META_INFO_MAP.get().put(tableFullName, TableMetaInfo.builder()
-                .fields(tableFieldMap)
+                .fields(columnPoList.stream()
+                        .map(c -> TableField.fromColumnPo(c, sourceName))
+                        .collect(Collectors.toMap(TableField::name, e -> e)))
+                .fieldList(columnPoList.stream().map(ColumnPo::columnName).collect(Collectors.toList()))
                 .dataSource(dataSource)
                 .name(tableName)
                 .schemaName(schemaName)

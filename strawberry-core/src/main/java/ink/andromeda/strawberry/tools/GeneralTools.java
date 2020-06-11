@@ -16,6 +16,7 @@ import java.sql.*;
 import java.util.Date;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 import static org.springframework.util.ReflectionUtils.*;
 
@@ -232,7 +233,15 @@ public class GeneralTools {
                         (autoTypeAliases ? upCaseToCamelCase(originalName, false) : originalName) :
                         ("set" + (autoTypeAliases ? upCaseToCamelCase(originalName, true)
                                 : originalName.charAt(0) - 32 + originalName.substring(1)));
-                Method method = findMethod(clazz, setterMethodName, null);
+                Method method;
+                if(fluentSetterMode){
+                    method = Stream.of(getAllDeclaredMethods(clazz))
+                            .filter(s -> s.getName().equals(setterMethodName) && s.getParameterCount() == 1)
+                            .findFirst()
+                            .orElse(null);
+                }else {
+                    method = findMethod(clazz, setterMethodName, null);
+                }
                 if (method == null) {
                     log.warn("could not found method {} in {}", setterMethodName, clazz.getTypeName());
                     continue;

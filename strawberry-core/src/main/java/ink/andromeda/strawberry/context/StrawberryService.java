@@ -1,4 +1,4 @@
-package ink.andromeda.strawberry.core;
+package ink.andromeda.strawberry.context;
 
 import org.springframework.stereotype.Service;
 

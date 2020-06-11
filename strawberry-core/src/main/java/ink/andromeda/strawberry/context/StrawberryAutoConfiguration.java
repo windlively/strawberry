@@ -1,6 +1,7 @@
-package ink.andromeda.strawberry.core;
+package ink.andromeda.strawberry.context;
 
 import com.zaxxer.hikari.HikariDataSource;
+import ink.andromeda.strawberry.core.DynamicDataSource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;

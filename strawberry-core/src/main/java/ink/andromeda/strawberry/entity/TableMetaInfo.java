@@ -40,6 +40,11 @@ public class TableMetaInfo {
     private Map<String, TableField> fields;
 
     /**
+     * 字段列表(按数据库顺序排列)
+     */
+    private List<String> fieldList;
+
+    /**
      * 该表对应的数据源
      */
     private DataSource dataSource;

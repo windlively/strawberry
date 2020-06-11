@@ -17,48 +17,18 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import static ink.andromeda.strawberry.core.StrawberryService.SIMPLE_TASK_POOL_EXECUTOR;
-import static ink.andromeda.strawberry.entity.JoinType.JOIN;
+import static ink.andromeda.strawberry.context.StrawberryService.SIMPLE_TASK_POOL_EXECUTOR;
 import static ink.andromeda.strawberry.tools.GeneralTools.*;
 
 /**
- * 数据集
+ * 跨源查询引擎
  */
 @Slf4j
-public class VirtualDataSet {
-
-    /**
-     * 数据集的id
-     */
-    @Getter
-    private final long id;
-
-    /**
-     * 数据集的名称(唯一)
-     */
-    @Getter
-    private final String name;
-
-    /**
-     * 该数据集所包含的表
-     * <p>库名.表名<->表信息</p>
-     */
-    @Getter
-    private final Map<String, TableMetaInfo> originalTables;
-
-    /**
-     * 本数据集所包含的原始表的虚拟关系
-     */
-    private final VirtualRelation virtualRelation;
-
-    /**
-     * 数据源集合
-     */
-    @Setter
-    private Map<Object, DataSource> dataSourceMap;
+public class CrossSourceQueryEngine {
 
     /**
      * <p>首轮查询时单次最大查询数量, 默认为1000。
@@ -68,51 +38,17 @@ public class VirtualDataSet {
     @Setter
     private int baseQueryCount = DEFAULT_BASE_QUERY_COUNT;
 
+    /**
+     * 结果集的最大长度, 超出该数量后剩余数据将被忽略
+     */
+    @Setter
+    private int maxResultLength = DEFAULT_MAX_RESULT_LENGTH;
+
     private static final int DEFAULT_BASE_QUERY_COUNT = 1000;
 
-    private static final int MAX_RESULT_LENGTH = 20000;
+    private static final int DEFAULT_MAX_RESULT_LENGTH = 20000;
 
     public final static String $_LINE_NUMBER_STR = "$LINE_NUMBER";
-
-    public VirtualDataSet(long id,
-                          String name,
-                          Map<String, TableMetaInfo> originalTables,
-                          VirtualRelation virtualRelation) {
-        this.id = id;
-        this.name = name;
-        this.originalTables = originalTables;
-        this.virtualRelation = virtualRelation;
-    }
-
-    public void executeQuery(String sql, int limit) throws Exception {
-        StopWatch stopWatch = new StopWatch("execute sql query");
-
-        stopWatch.start("parser sql");
-        CrossOriginSQLParser crossOriginSQLParser = new CrossOriginSQLParser(sql);
-        stopWatch.stop();
-
-        stopWatch.start("analysis relation");
-        VirtualRelation virtualRelation = crossOriginSQLParser.analysis();
-        stopWatch.stop();
-
-        stopWatch.start("analysis driving table");
-        String drivingTable = analysisDrivingTable(virtualRelation);
-        stopWatch.stop();
-
-        Map<String, VirtualRelation.VirtualNode> virtualNodeMap = virtualRelation.getVirtualNodeMap();
-        Set<String> remainTables = new HashSet<>(virtualNodeMap.keySet());
-
-        stopWatch.start("execute");
-        List<String> fs = new ArrayList<>(virtualRelation.getTableLabelRef().keySet());
-        Set<String> fields = new TreeSet<>();
-        List<Map<String, Object>> result = startQuery(drivingTable, virtualRelation, remainTables, fields, limit);
-        stopWatch.stop();
-
-        VirtualResultSet resultSet = new VirtualResultSet(sql, result, fields);
-        log.info(resultSet.toString());
-        log.info("data size: {}", result.size());
-        log.info(stopWatch.prettyPrint());
-    }
 
 
     // 执行join操作时的标识符
@@ -134,142 +70,241 @@ public class VirtualDataSet {
      */
     private final static byte MASTER_AS_WAITING_JOIN_DATA = 3;
 
+    public CrossSourceQueryEngine(Function<String, TableMetaInfo> obtainTableMetaInfoFunction,
+                                  Function<String, DataSource> obtainDataSourceFunction) {
+        Objects.requireNonNull(obtainDataSourceFunction);
+        Objects.requireNonNull(obtainTableMetaInfoFunction);
 
-    private void executeQuery(String currentTableLabelName,
-                              boolean asRight,
-                              JoinProfile joinProfile,
-                              AtomicReference<List<Map<String, Object>>> currentData,
-                              OriginalResultSet refData,
-                              VirtualRelation relation,
-                              Set<String> fields,
-                              Set<String> remainTables) {
+        this.obtainTableMetaInfoFunction = obtainTableMetaInfoFunction;
+        this.obtainDataSourceFunction = obtainDataSourceFunction;
+    }
+
+    /**
+     * 根据表全名获取数据库表元信息的function
+     * 表名格式: {source}.{schema}.{table}
+     */
+    private final Function<String, TableMetaInfo> obtainTableMetaInfoFunction;
+
+    /**
+     * 根据数据源名称获取数据源的function
+     */
+    private final Function<String, DataSource> obtainDataSourceFunction;
+
+    public VirtualResultSet executeQuery(String sql) throws Exception {
+        return executeQuery(sql, -1);
+    }
+
+    public VirtualResultSet executeQuery(String sql, int limit) throws Exception {
+
+        CrossSourceSQLParser crossSourceSQLParser = new CrossSourceSQLParser(sql);
+
+        log.debug("start query: {}", crossSourceSQLParser.getSql());
+
+        VirtualRelation virtualRelation = crossSourceSQLParser.analysis();
+
+        String drivingTable = analysisDrivingTable(virtualRelation);
+
+        Map<String, VirtualRelation.VirtualNode> virtualNodeMap = virtualRelation.getVirtualNodeMap();
+
+        Set<String> remainTables = new HashSet<>(virtualNodeMap.keySet());
+
+        Map<String, String> tableLabelRef = virtualRelation.getTableLabelRef();
+
+        // 多线程查询原始表元信息
+        CountDownLatch countDownLatch = new CountDownLatch(tableLabelRef.size());
+        List<List<String>> fs = new ArrayList<>();
+        virtualRelation.getTableLabelRef().forEach((labelName, fullName) -> {
+            List<String> list = new ArrayList<>();
+            fs.add(list);
+            SIMPLE_TASK_POOL_EXECUTOR.submit(() -> {
+                try {
+                    TableMetaInfo tableMetaInfo =
+                            Objects.requireNonNull(obtainTableMetaInfoFunction.apply(fullName),
+                                    String.format("could not found table '%s(%s)' meta info", labelName, fullName));
+                    list.addAll(tableMetaInfo.fieldList()
+                            .stream()
+                            .map(s -> labelName + "." + s)
+                            .collect(Collectors.toList()));
+                } catch (Exception ex) {
+                    log.error(ex.toString(), ex);
+                } finally {
+                    countDownLatch.countDown();
+                }
+            });
+        });
+
+        List<Map<String, Object>> result = executeQuery(drivingTable, virtualRelation, remainTables, limit);
+
+        countDownLatch.await();
+        String[] fields = fs.stream().flatMap(Collection::stream).toArray(String[]::new);
+        VirtualResultSet resultSet = new VirtualResultSet(sql, result, fields);
+        log.debug("data size: {}", result.size());
+        return resultSet;
+    }
+
+    /**
+     * 递归查询
+     *
+     * @param currentTableLabelName 当前表名
+     * @param asRight               是否在右侧
+     * @param joinProfile           连接配置
+     * @param currentData           当前已有数据
+     * @param refData               参考数据(上一轮查询结果, 与当前数据有连接关系)
+     * @param relation              链接关系
+     * @param remainTables          剩余表
+     */
+    private void recursiveQuery(String currentTableLabelName,
+                                boolean asRight,
+                                JoinProfile joinProfile,
+                                AtomicReference<List<Map<String, Object>>> currentData,
+                                OriginalResultSet refData,
+                                VirtualRelation relation,
+                                Set<String> remainTables) {
+        // 如果剩余的表不包含当前表, 则表示当前表已经处理过, 退出查询,
         if (!remainTables.contains(currentTableLabelName))
             return;
+        // 当前表节点
         VirtualRelation.VirtualNode currentNode = relation.getVirtualNodeMap().get(currentTableLabelName);
-
         Set<Pair<String, String>> joinFieldPairs = joinProfile.joinFields();
         JoinType joinType = joinProfile.joinType();
         byte joinIdentifier = getJoinIdentifier(asRight, joinType);
         boolean hasQueryParam = relation.getWhereCases().get(currentTableLabelName) != null;
 
-
-        if(refData.data.isEmpty()){
-            if (hasQueryParam
-                || joinIdentifier == INNER_JOIN
-                || joinIdentifier == MASTER_AS_WAITING_JOIN_DATA) {
-                // remainTables.clear();
-                currentData.get().clear();
-            }
+        // 已有结果数据为空
+        if (currentData.get().isEmpty()) {
+//            if (hasQueryParam
+//                || joinIdentifier == INNER_JOIN
+//                || joinIdentifier == MASTER_AS_WAITING_JOIN_DATA) {
+//                // remainTables.clear();
+//                currentData.get().clear();
+//            }
             remainTables.remove(currentTableLabelName);
-            recursiveQuery(currentNode, currentData, relation, refData, fields, remainTables);
+            nextQuery(currentNode, currentData, relation, refData, remainTables);
             return;
         }
-        String tableFullName = relation.getTableLabelRef().get(currentTableLabelName);
-        String[] splitTableFullName = splitTableFullName(tableFullName);
-        String source = splitTableFullName[0];
-        String schema = splitTableFullName[1];
-        String tableName = splitTableFullName[2];
+        OriginalResultSet originalResultSet = refData;
+        if (!refData.data.isEmpty()) {
+            String tableFullName = relation.getTableLabelRef().get(currentTableLabelName);
+            String[] splitTableFullName = splitTableFullName(tableFullName);
+            String source = splitTableFullName[0];
+            String schema = splitTableFullName[1];
+            String tableName = splitTableFullName[2];
 
-        DataSource dataSource = getNonNullDataSource(source);
-        StringBuilder SQL = new StringBuilder("SELECT * FROM " + schema + "." + tableName + " WHERE ");
+            DataSource dataSource = getNonNullDataSource(source);
+            StringBuilder SQL = new StringBuilder("SELECT * FROM " + schema + "." + tableName + " WHERE ");
 
-        List<String> joinFields = asRight ? joinFieldPairs.stream().map(Pair::getRight).collect(Collectors.toList()) :
-                joinFieldPairs.stream().map(Pair::getLeft).collect(Collectors.toList());
+            List<String> joinFields = asRight ? joinFieldPairs.stream().map(Pair::getRight).collect(Collectors.toList()) :
+                    joinFieldPairs.stream().map(Pair::getLeft).collect(Collectors.toList());
 
-        String[] refJoinFields = asRight ? joinFieldPairs.stream().map(Pair::getLeft).toArray(String[]::new) :
-                joinFieldPairs.stream().map(Pair::getRight).toArray(String[]::new);
+            String[] refJoinFields = asRight ? joinFieldPairs.stream().map(Pair::getLeft).toArray(String[]::new) :
+                    joinFieldPairs.stream().map(Pair::getRight).toArray(String[]::new);
 
-        StringBuilder[] joinStatements = new StringBuilder[joinFieldPairs.size()];
-        int i = 0;
-        for (Pair<String, String> pair : joinFieldPairs) {
-            StringBuilder statement = new StringBuilder();
-            String joinField = subStringAt(asRight ? pair.getRight() : pair.getLeft(), '.');
-            String refJoinField = asRight ? pair.getLeft() : pair.getRight();
-            statement.append(joinField).append(" IN ");
-            statement.append(refData.index.get(refJoinField).keySet().stream()
-                    .map(s -> javaObjectToSQLStringValue(s.values()[0])).collect(Collectors.joining(",", "(", ")")));
-            joinStatements[i++] = statement;
-        }
-
-        SQL.append(String.join(" AND ", joinStatements));
-        if (hasQueryParam) {
-            SQL.append(" AND ");
-            SQL.append(toSQLCondition(currentTableLabelName, tableName, relation.getWhereCases().get(currentTableLabelName)));
-        }
-
-        VirtualRelation.VirtualNode node = relation.getVirtualNodeMap().get(currentTableLabelName);
-
-        String[][] index = findIndex(node);
-        OriginalResultSet originalResultSet = new OriginalResultSet(currentTableLabelName, index);
-        try (
-                Connection connection = dataSource.getConnection();
-                PreparedStatement statement = connection.prepareStatement(SQL.toString());
-                ResultSet resultSet = statement.executeQuery();
-        ) {
-            ResultSetMetaData metaData = resultSet.getMetaData();
-            int columnCount = metaData.getColumnCount();
-            String[] labelNames = new String[columnCount + 1];
-            for (i = 1; i <= columnCount; i++) {
-                labelNames[i] = currentTableLabelName + "." + metaData.getColumnName(i);
-                fields.add(labelNames[i]);
+            StringBuilder[] joinStatements = new StringBuilder[joinFieldPairs.size()];
+            int i = 0;
+            for (Pair<String, String> pair : joinFieldPairs) {
+                StringBuilder statement = new StringBuilder();
+                String joinField = subStringAt(asRight ? pair.getRight() : pair.getLeft(), '.');
+                String refJoinField = asRight ? pair.getLeft() : pair.getRight();
+                statement.append(joinField).append(" IN ");
+                statement.append(refData.index.get(refJoinField).keySet().stream()
+                        .map(s -> javaObjectToSQLStringValue(s.values()[0])).collect(Collectors.joining(",", "(", ")")));
+                joinStatements[i++] = statement;
             }
-            int lineNumber = 0;
-            while (resultSet.next()) {
-                Map<String, Object> object = new HashMap<>(columnCount);
+
+            SQL.append(String.join(" AND ", joinStatements));
+            if (hasQueryParam) {
+                SQL.append(" AND ");
+                SQL.append(toSQLCondition(currentTableLabelName, tableName, relation.getWhereCases().get(currentTableLabelName)));
+            }
+
+            VirtualRelation.VirtualNode node = relation.getVirtualNodeMap().get(currentTableLabelName);
+
+            String[][] index = findIndex(node);
+            originalResultSet = new OriginalResultSet(currentTableLabelName, index);
+            try (
+                    Connection connection = dataSource.getConnection();
+                    PreparedStatement statement = connection.prepareStatement(SQL.toString());
+                    ResultSet resultSet = statement.executeQuery();
+            ) {
+                ResultSetMetaData metaData = resultSet.getMetaData();
+                int columnCount = metaData.getColumnCount();
+                String[] labelNames = new String[columnCount + 1];
                 for (i = 1; i <= columnCount; i++) {
-                    object.put(labelNames[i], resultSet.getObject(i));
+                    labelNames[i] = currentTableLabelName + "." + metaData.getColumnName(i);
                 }
-                originalResultSet.add(object, lineNumber++);
+                int lineNumber = 0;
+                while (resultSet.next()) {
+                    Map<String, Object> object = new HashMap<>(columnCount);
+                    for (i = 1; i <= columnCount; i++) {
+                        object.put(labelNames[i], resultSet.getObject(i));
+                    }
+                    originalResultSet.add(object, lineNumber++);
+                }
+            } catch (SQLException ex) {
+                ex.printStackTrace();
             }
-        } catch (SQLException ex) {
-            ex.printStackTrace();
-        }
 
-        List<Map<String, Object>> newResult = new ArrayList<>(currentData.get().size());
-        if (originalResultSet.data.isEmpty()) {
-
-        }else {
-            String indexName = String.join(":",
-                    joinFieldPairs.stream().map(p -> asRight ? p.getRight() : p.getLeft()).toArray(String[]::new));
-            /*
-             * 执行join操作
-             *
-             */
-            Map<IndexKey, List<Object[]>> indexMap = Objects.requireNonNull(originalResultSet.index.get(indexName));
-            boolean[] processedData = new boolean[originalResultSet.data.size()];
-            for (Map<String, Object> current : currentData.get()) {
-                Object[] val = Stream.of(refJoinFields).map(current::get).toArray();
-                IndexKey indexKey = IndexKey.of(val);
-                List<Object[]> joinData = Optional.ofNullable(indexMap.get(indexKey)).orElse(Collections.emptyList());
-                if (joinData.size() == 0 && !hasQueryParam) {
-                    if (joinIdentifier == FULL_JOIN || joinIdentifier == MASTER_AS_JOINED_DATA)
-                        newResult.add(current);
+            List<Map<String, Object>> newResult = new ArrayList<>(currentData.get().size());
+            if (originalResultSet.data.isEmpty()) {
+                if (hasQueryParam
+                    || joinIdentifier == INNER_JOIN
+                    || joinIdentifier == MASTER_AS_WAITING_JOIN_DATA) {
+                    // remainTables.clear();
+                    currentData.get().clear();
                 }
-                if (joinData.size() >= 1) {
-                    for (Object[] joinDataItem : joinData) {
-                        //noinspection unchecked
-                        current.putAll((Map<String, ?>) joinDataItem[0]);
-                        newResult.add(current);
-                        processedData[(int) joinDataItem[1]] = true;
+            } else {
+                String indexName = String.join(":",
+                        joinFieldPairs.stream().map(p -> asRight ? p.getRight() : p.getLeft()).toArray(String[]::new));
+                /*
+                 * 执行join操作
+                 *
+                 */
+                Map<IndexKey, List<Object[]>> indexMap = Objects.requireNonNull(originalResultSet.index.get(indexName));
+                boolean[] processedData = new boolean[originalResultSet.data.size()];
+                for (Map<String, Object> current : currentData.get()) {
+                    Map<String, Object> newData = new HashMap<>(current);
+                    Object[] val = Stream.of(refJoinFields).map(newData::get).toArray();
+                    IndexKey indexKey = IndexKey.of(val);
+                    List<Object[]> joinData = Optional.ofNullable(indexMap.get(indexKey)).orElse(Collections.emptyList());
+                    if (joinData.size() == 0 && !hasQueryParam) {
+                        if (joinIdentifier == FULL_JOIN || joinIdentifier == MASTER_AS_JOINED_DATA)
+                            newResult.add(newData);
+                    }
+                    if (joinData.size() >= 1) {
+                        for (Object[] joinDataItem : joinData) {
+                            //noinspection unchecked
+                            newData.putAll((Map<String, ?>) joinDataItem[0]);
+                            newResult.add(new HashMap<>(newData));
+                            processedData[(int) joinDataItem[1]] = true;
+                        }
                     }
                 }
-            }
-            if (joinIdentifier == MASTER_AS_WAITING_JOIN_DATA || joinIdentifier == FULL_JOIN) {
-                for (int j = 0; j < processedData.length; j++) {
-                    if (!processedData[j])
-                        //noinspection unchecked
-                        newResult.add((Map<String, Object>) originalResultSet.data.get(j)[0]);
+                if (joinIdentifier == MASTER_AS_WAITING_JOIN_DATA || joinIdentifier == FULL_JOIN) {
+                    for (int j = 0; j < processedData.length; j++) {
+                        if (!processedData[j])
+                            //noinspection unchecked
+                            newResult.add((Map<String, Object>) originalResultSet.data.get(j)[0]);
+                    }
                 }
+                currentData.set(newResult);
             }
-            currentData.set(newResult);
+            log.info(SQL.toString());
         }
         remainTables.remove(currentTableLabelName);
-        log.info(SQL.toString());
-        recursiveQuery(currentNode, currentData, relation, originalResultSet, fields, remainTables);
+        nextQuery(currentNode, currentData, relation, originalResultSet, remainTables);
     }
 
-    private List<Map<String, Object>> startQuery(String startTableLabelName, VirtualRelation relation,
-                                                 Set<String> remainTables, Set<String> fields, int limit) {
+    /**
+     * 初始轮的查询
+     *
+     * @param startTableLabelName 初始查询的表名
+     * @param relation            链接关系
+     * @param remainTables        剩余表
+     * @param limit               限制条数, -1为不限制
+     * @return 结果数据
+     */
+    private List<Map<String, Object>> executeQuery(String startTableLabelName, VirtualRelation relation,
+                                                   Set<String> remainTables, int limit) {
         String tableFullName = relation.getTableLabelRef().get(startTableLabelName);
         String[] splitTableFullName = splitTableFullName(tableFullName);
         String source = splitTableFullName[0];
@@ -305,7 +340,6 @@ public class VirtualDataSet {
                 String[] labelNames = new String[columnCount + 1];
                 for (int i = 1; i <= columnCount; i++) {
                     labelNames[i] = startTableLabelName + "." + metaData.getColumnName(i);
-                    fields.add(labelNames[i]);
                 }
                 while (resultSet.next()) {
                     Map<String, Object> object = new HashMap<>(columnCount);
@@ -323,11 +357,11 @@ public class VirtualDataSet {
             VirtualRelation.VirtualNode currentNode = relation.getVirtualNodeMap().get(startTableLabelName);
 
             remainTables.remove(startTableLabelName);
-            recursiveQuery(currentNode, currentData, relation, originalResultSet, fields, new HashSet<>(remainTables));
+            nextQuery(currentNode, currentData, relation, originalResultSet, new HashSet<>(remainTables));
             result.addAll(currentData.get());
 
-            if (MAX_RESULT_LENGTH > 0 && result.size() > MAX_RESULT_LENGTH) {
-                log.warn("the result size is out of limit size {}, ignore the following data!", MAX_RESULT_LENGTH);
+            if (maxResultLength > 0 && result.size() > maxResultLength) {
+                log.warn("the result size is out of limit size {}, ignore the following data!", maxResultLength);
                 break;
             }
 
@@ -341,29 +375,27 @@ public class VirtualDataSet {
     }
 
     /**
-     * 递归查询数据
+     * 执行下一轮查询
      *
      * @param currentNode  当前节点(表名)
      * @param currentData  已查询出的数据
      * @param relation     SQL语句的内联关系
      * @param refData      与当前节点Join的数据
-     * @param fields       结果集的字段
      * @param remainTables 剩余未查询的表
      */
-    private void recursiveQuery(VirtualRelation.VirtualNode currentNode,
-                                AtomicReference<List<Map<String, Object>>> currentData,
-                                VirtualRelation relation,
-                                OriginalResultSet refData,
-                                Set<String> fields,
-                                Set<String> remainTables) {
+    private void nextQuery(VirtualRelation.VirtualNode currentNode,
+                           AtomicReference<List<Map<String, Object>>> currentData,
+                           VirtualRelation relation,
+                           OriginalResultSet refData,
+                           Set<String> remainTables) {
         Map<String, JoinProfile> nextList = currentNode.next();
         Map<String, JoinProfile> prevList = currentNode.prev();
         if (!nextList.isEmpty()) {
-            nextList.forEach((tableLabel, joinFields) -> executeQuery(tableLabel, true, joinFields, currentData, refData, relation, fields, remainTables));
+            nextList.forEach((tableLabel, joinFields) -> recursiveQuery(tableLabel, true, joinFields, currentData, refData, relation, remainTables));
         }
 
         if (!prevList.isEmpty()) {
-            prevList.forEach((tableLabel, joinFields) -> executeQuery(tableLabel, false, joinFields, currentData, refData, relation, fields, remainTables));
+            prevList.forEach((tableLabel, joinFields) -> recursiveQuery(tableLabel, false, joinFields, currentData, refData, relation, remainTables));
         }
     }
 
@@ -540,6 +572,10 @@ public class VirtualDataSet {
      * @throws IllegalStateException 无法找到驱动表
      */
     private String analysisDrivingTable(VirtualRelation relation) {
+        // 如果只有一个表有查询条件, 直接返回该表名
+        if(relation.getWhereCases().size() == 1)
+            return relation.getWhereCases().keySet().stream().findFirst().orElse(null);
+
         CountDownLatch countDownLatch = new CountDownLatch(relation.getWhereCases().size());
 
         // 会有多线程竞争的bug, TreeSet非线程安全
@@ -600,8 +636,15 @@ public class VirtualDataSet {
         return result;
     }
 
+    /**
+     * 获取数据源
+     *
+     * @param sourceName 数据源名称
+     * @return {@link DataSource}
+     * @throws NullPointerException 未找到对应数据源
+     */
     private DataSource getNonNullDataSource(String sourceName) {
-        return Objects.requireNonNull(this.dataSourceMap.get(sourceName), "data source '" + sourceName + "' is null!");
+        return Objects.requireNonNull(obtainDataSourceFunction.apply(sourceName), "data source '" + sourceName + "' is null!");
     }
 
     private static String toSQLCondition(String tableLabelName, String correctTableName, List<String> whereCases) {
