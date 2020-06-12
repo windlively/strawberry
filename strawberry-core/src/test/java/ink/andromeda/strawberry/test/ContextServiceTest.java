@@ -210,7 +210,7 @@ public class ContextServiceTest {
         // virtualDataSet.setBaseQueryCount(50);
         StopWatch stopWatch = new StopWatch("query");
         stopWatch.start();
-        VirtualResultSet resultSet = crossSourceQueryEngine.executeQuery(sql);
+        QueryResults resultSet = crossSourceQueryEngine.executeQuery(sql);
         stopWatch.stop();
         log.info(resultSet.toString());
         log.info(stopWatch.prettyPrint());
@@ -222,13 +222,18 @@ public class ContextServiceTest {
     public void joinTest2() throws Exception {
         String sql = "select * from test.test.join_test_a ta " +
                      " right join test.test.join_test_b tb on ta.f1=tb.f2 " +
-                     //"join test.test.join_test_a td on td.f1=tb.f2 " +
-                     " left join test.test.join_test_c tc on tc.f3=tb.f2 " +
-                     "where tb.f1=0";
-        log.info(sql);
+                     " left join test.test.join_test_a td on td.f1=tb.f2 " +
+                     " left join test.test.join_test_c tc on tc.f1=td.f1 " +
+                     "where tc.f1=0";
         CrossSourceQueryEngine crossSourceQueryEngine =
                 new CrossSourceQueryEngine(s -> metaInfoDao.getTableMetaInfo(s), s -> dynamicDataSource.getDataSource(s));
 
-        crossSourceQueryEngine.executeQuery(sql);
+        StopWatch stopWatch = new StopWatch("query");
+        stopWatch.start();
+        QueryResults resultSet = crossSourceQueryEngine.executeQuery(sql);
+        stopWatch.stop();
+        log.info(resultSet.toString());
+        log.info(stopWatch.prettyPrint());
+        log.info("size: " + resultSet.getSize());
     }
 }

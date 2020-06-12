@@ -1,6 +1,5 @@
 package ink.andromeda.strawberry.core;
 
-import ink.andromeda.strawberry.tools.Pair;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
@@ -16,11 +15,15 @@ import static ink.andromeda.strawberry.tools.GeneralTools.toJSONString;
  * 原始表之间的关系
  *
  */
-public class VirtualRelation {
+public class LinkRelation {
 
     @Setter
     @Getter
-    private Map<String, VirtualNode> virtualNodeMap;
+    private Map<String, TableNode> virtualNodeMap;
+
+    @Setter
+    @Getter
+    private List<String> tables;
 
     @Setter
     @Getter
@@ -30,15 +33,18 @@ public class VirtualRelation {
     @Getter
     private Map<String, List<String>> whereCases;
 
+    @Setter
+    @Getter
+    private List<String> innerCondition;
 
     @Getter
     @Accessors(fluent = true)
     @ToString
-    public static class VirtualNode {
+    public static class TableNode {
 
         private final String tableName;
 
-        public VirtualNode(String tableName){
+        public TableNode(String tableName){
             this.tableName = tableName;
         }
 

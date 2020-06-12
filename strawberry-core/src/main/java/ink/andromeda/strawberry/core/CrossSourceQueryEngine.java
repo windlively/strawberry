@@ -9,7 +9,6 @@ import ink.andromeda.strawberry.tools.SQLTemplate;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.util.StopWatch;
 
 import javax.sql.DataSource;
 import java.sql.*;
@@ -72,11 +71,9 @@ public class CrossSourceQueryEngine {
 
     public CrossSourceQueryEngine(Function<String, TableMetaInfo> obtainTableMetaInfoFunction,
                                   Function<String, DataSource> obtainDataSourceFunction) {
-        Objects.requireNonNull(obtainDataSourceFunction);
-        Objects.requireNonNull(obtainTableMetaInfoFunction);
 
-        this.obtainTableMetaInfoFunction = obtainTableMetaInfoFunction;
-        this.obtainDataSourceFunction = obtainDataSourceFunction;
+        this.obtainTableMetaInfoFunction = Objects.requireNonNull(obtainTableMetaInfoFunction);
+        this.obtainDataSourceFunction = Objects.requireNonNull(obtainDataSourceFunction);
     }
 
     /**
@@ -90,31 +87,32 @@ public class CrossSourceQueryEngine {
      */
     private final Function<String, DataSource> obtainDataSourceFunction;
 
-    public VirtualResultSet executeQuery(String sql) throws Exception {
+    public QueryResults executeQuery(String sql) throws Exception {
         return executeQuery(sql, -1);
     }
 
-    public VirtualResultSet executeQuery(String sql, int limit) throws Exception {
+    public QueryResults executeQuery(String sql, int limit) throws Exception {
 
         CrossSourceSQLParser crossSourceSQLParser = new CrossSourceSQLParser(sql);
 
         log.debug("start query: {}", crossSourceSQLParser.getSql());
 
-        VirtualRelation virtualRelation = crossSourceSQLParser.analysis();
+        LinkRelation linkRelation = crossSourceSQLParser.analysis();
 
-        String drivingTable = analysisDrivingTable(virtualRelation);
+        String drivingTable = analysisDrivingTable(linkRelation);
 
-        Map<String, VirtualRelation.VirtualNode> virtualNodeMap = virtualRelation.getVirtualNodeMap();
+        Map<String, LinkRelation.TableNode> virtualNodeMap = linkRelation.getVirtualNodeMap();
 
         Set<String> remainTables = new HashSet<>(virtualNodeMap.keySet());
 
-        Map<String, String> tableLabelRef = virtualRelation.getTableLabelRef();
+        Map<String, String> tableLabelRef = linkRelation.getTableLabelRef();
 
         // 多线程查询原始表元信息
         CountDownLatch countDownLatch = new CountDownLatch(tableLabelRef.size());
         List<List<String>> fs = new ArrayList<>();
-        virtualRelation.getTableLabelRef().forEach((labelName, fullName) -> {
+        linkRelation.getTables().forEach((labelName) -> {
             List<String> list = new ArrayList<>();
+            String fullName = Objects.requireNonNull(tableLabelRef.get(labelName));
             fs.add(list);
             SIMPLE_TASK_POOL_EXECUTOR.submit(() -> {
                 try {
@@ -133,11 +131,11 @@ public class CrossSourceQueryEngine {
             });
         });
 
-        List<Map<String, Object>> result = executeQuery(drivingTable, virtualRelation, remainTables, limit);
+        List<Map<String, Object>> result = executeQuery(drivingTable, linkRelation, remainTables, limit);
 
         countDownLatch.await();
         String[] fields = fs.stream().flatMap(Collection::stream).toArray(String[]::new);
-        VirtualResultSet resultSet = new VirtualResultSet(sql, result, fields);
+        QueryResults resultSet = new QueryResults(sql, result, fields);
         log.debug("data size: {}", result.size());
         return resultSet;
     }
@@ -157,14 +155,14 @@ public class CrossSourceQueryEngine {
                                 boolean asRight,
                                 JoinProfile joinProfile,
                                 AtomicReference<List<Map<String, Object>>> currentData,
-                                OriginalResultSet refData,
-                                VirtualRelation relation,
+                                IntermediateResultSet refData,
+                                LinkRelation relation,
                                 Set<String> remainTables) {
         // 如果剩余的表不包含当前表, 则表示当前表已经处理过, 退出查询,
         if (!remainTables.contains(currentTableLabelName))
             return;
         // 当前表节点
-        VirtualRelation.VirtualNode currentNode = relation.getVirtualNodeMap().get(currentTableLabelName);
+        LinkRelation.TableNode currentNode = relation.getVirtualNodeMap().get(currentTableLabelName);
         Set<Pair<String, String>> joinFieldPairs = joinProfile.joinFields();
         JoinType joinType = joinProfile.joinType();
         byte joinIdentifier = getJoinIdentifier(asRight, joinType);
@@ -172,17 +170,9 @@ public class CrossSourceQueryEngine {
 
         // 已有结果数据为空
         if (currentData.get().isEmpty()) {
-//            if (hasQueryParam
-//                || joinIdentifier == INNER_JOIN
-//                || joinIdentifier == MASTER_AS_WAITING_JOIN_DATA) {
-//                // remainTables.clear();
-//                currentData.get().clear();
-//            }
-            remainTables.remove(currentTableLabelName);
-            nextQuery(currentNode, currentData, relation, refData, remainTables);
-            return;
+
         }
-        OriginalResultSet originalResultSet = refData;
+        IntermediateResultSet intermediateResultSet = refData;
         if (!refData.data.isEmpty()) {
             String tableFullName = relation.getTableLabelRef().get(currentTableLabelName);
             String[] splitTableFullName = splitTableFullName(tableFullName);
@@ -217,10 +207,10 @@ public class CrossSourceQueryEngine {
                 SQL.append(toSQLCondition(currentTableLabelName, tableName, relation.getWhereCases().get(currentTableLabelName)));
             }
 
-            VirtualRelation.VirtualNode node = relation.getVirtualNodeMap().get(currentTableLabelName);
+            LinkRelation.TableNode node = relation.getVirtualNodeMap().get(currentTableLabelName);
 
             String[][] index = findIndex(node);
-            originalResultSet = new OriginalResultSet(currentTableLabelName, index);
+            intermediateResultSet = new IntermediateResultSet(currentTableLabelName, index);
             try (
                     Connection connection = dataSource.getConnection();
                     PreparedStatement statement = connection.prepareStatement(SQL.toString());
@@ -233,23 +223,27 @@ public class CrossSourceQueryEngine {
                     labelNames[i] = currentTableLabelName + "." + metaData.getColumnName(i);
                 }
                 int lineNumber = 0;
+                /*
+                 * 也可以查询出的数据为基准, 再去join前面的数据
+                 *
+                 */
                 while (resultSet.next()) {
                     Map<String, Object> object = new HashMap<>(columnCount);
                     for (i = 1; i <= columnCount; i++) {
                         object.put(labelNames[i], resultSet.getObject(i));
                     }
-                    originalResultSet.add(object, lineNumber++);
+                    object.put($_LINE_NUMBER_STR, lineNumber ++);
+                    intermediateResultSet.add(object);
                 }
             } catch (SQLException ex) {
                 ex.printStackTrace();
             }
 
             List<Map<String, Object>> newResult = new ArrayList<>(currentData.get().size());
-            if (originalResultSet.data.isEmpty()) {
+            if (intermediateResultSet.data.isEmpty()) {
                 if (hasQueryParam
                     || joinIdentifier == INNER_JOIN
                     || joinIdentifier == MASTER_AS_WAITING_JOIN_DATA) {
-                    // remainTables.clear();
                     currentData.get().clear();
                 }
             } else {
@@ -259,39 +253,49 @@ public class CrossSourceQueryEngine {
                  * 执行join操作
                  *
                  */
-                Map<IndexKey, List<Object[]>> indexMap = Objects.requireNonNull(originalResultSet.index.get(indexName));
-                boolean[] processedData = new boolean[originalResultSet.data.size()];
+                Map<IndexKey, List<Map<String, Object>>> indexMap = Objects.requireNonNull(intermediateResultSet.index.get(indexName));
+                boolean[] processedData = new boolean[intermediateResultSet.data.size()];
                 for (Map<String, Object> current : currentData.get()) {
                     Map<String, Object> newData = new HashMap<>(current);
                     Object[] val = Stream.of(refJoinFields).map(newData::get).toArray();
                     IndexKey indexKey = IndexKey.of(val);
-                    List<Object[]> joinData = Optional.ofNullable(indexMap.get(indexKey)).orElse(Collections.emptyList());
+                    List<Map<String, Object>> joinData = Optional.ofNullable(indexMap.get(indexKey)).orElse(Collections.emptyList());
                     if (joinData.size() == 0 && !hasQueryParam) {
                         if (joinIdentifier == FULL_JOIN || joinIdentifier == MASTER_AS_JOINED_DATA)
                             newResult.add(newData);
                     }
                     if (joinData.size() >= 1) {
-                        for (Object[] joinDataItem : joinData) {
-                            //noinspection unchecked
-                            newData.putAll((Map<String, ?>) joinDataItem[0]);
+                        for (Map<String, Object> joinDataItem : joinData) {
+                            processedData[(int) joinDataItem.get($_LINE_NUMBER_STR)] = true;
+                            newData.putAll(joinDataItem);
+                            // 需要重新创建新的副本对象
                             newResult.add(new HashMap<>(newData));
-                            processedData[(int) joinDataItem[1]] = true;
                         }
                     }
                 }
-                if (joinIdentifier == MASTER_AS_WAITING_JOIN_DATA || joinIdentifier == FULL_JOIN) {
-                    for (int j = 0; j < processedData.length; j++) {
-                        if (!processedData[j])
-                            //noinspection unchecked
-                            newResult.add((Map<String, Object>) originalResultSet.data.get(j)[0]);
+                /*
+                    if (joinIdentifier == MASTER_AS_WAITING_JOIN_DATA || joinIdentifier == FULL_JOIN) {
+                        for (int j = 0; j < processedData.length; j++) {
+                            if (!processedData[j])
+                                //noinspection unchecked
+                                newResult.add((Map<String, Object>) intermediateResultSet.data.get(j)[0]);
+                        }
                     }
-                }
+                 */
                 currentData.set(newResult);
             }
             log.info(SQL.toString());
+        }else {
+            if(!currentData.get().isEmpty()){
+                if (hasQueryParam
+                    || joinIdentifier == INNER_JOIN
+                    || joinIdentifier == MASTER_AS_WAITING_JOIN_DATA) {
+                    currentData.get().clear();
+                }
+            }
         }
         remainTables.remove(currentTableLabelName);
-        nextQuery(currentNode, currentData, relation, originalResultSet, remainTables);
+        nextQuery(currentNode, currentData, relation, intermediateResultSet, remainTables);
     }
 
     /**
@@ -303,7 +307,7 @@ public class CrossSourceQueryEngine {
      * @param limit               限制条数, -1为不限制
      * @return 结果数据
      */
-    private List<Map<String, Object>> executeQuery(String startTableLabelName, VirtualRelation relation,
+    private List<Map<String, Object>> executeQuery(String startTableLabelName, LinkRelation relation,
                                                    Set<String> remainTables, int limit) {
         String tableFullName = relation.getTableLabelRef().get(startTableLabelName);
         String[] splitTableFullName = splitTableFullName(tableFullName);
@@ -316,7 +320,7 @@ public class CrossSourceQueryEngine {
         List<String> wheres = Objects.requireNonNull(relation.getWhereCases().get(startTableLabelName));
         String conditions = toSQLCondition(startTableLabelName, tableName, wheres);
         SQL.append(conditions);
-        VirtualRelation.VirtualNode node = relation.getVirtualNodeMap().get(startTableLabelName);
+        LinkRelation.TableNode node = relation.getVirtualNodeMap().get(startTableLabelName);
 
 
         String[][] index = findIndex(node);
@@ -324,12 +328,11 @@ public class CrossSourceQueryEngine {
         int start = 0;
         List<Map<String, Object>> result = new ArrayList<>(64);
         while (true) {
-            OriginalResultSet originalResultSet = new OriginalResultSet(startTableLabelName, index);
+            IntermediateResultSet intermediateResultSet = new IntermediateResultSet(startTableLabelName, index);
             String currentSQL = SQL.toString() + " LIMIT " + start + "," + baseQueryCount;
             start += baseQueryCount;
             log.info("driving data query: {}", currentSQL);
             int dataCount = 0;
-            List<Map<String, Object>> drivingData = new ArrayList<>(16);
             try (
                     Connection connection = dataSource.getConnection();
                     PreparedStatement statement = connection.prepareStatement(currentSQL);
@@ -346,18 +349,17 @@ public class CrossSourceQueryEngine {
                     for (int i = 1; i <= columnCount; i++) {
                         object.put(labelNames[i], resultSet.getObject(i));
                     }
-                    originalResultSet.add(object, 0);
-                    drivingData.add(object);
+                    intermediateResultSet.add(object);
                     dataCount++;
                 }
             } catch (Exception ex) {
                 throw new IllegalStateException("exception in execute sql: " + SQL, ex);
             }
-            AtomicReference<List<Map<String, Object>>> currentData = new AtomicReference<>(drivingData);
-            VirtualRelation.VirtualNode currentNode = relation.getVirtualNodeMap().get(startTableLabelName);
+            AtomicReference<List<Map<String, Object>>> currentData = new AtomicReference<>(intermediateResultSet.data);
+            LinkRelation.TableNode currentNode = relation.getVirtualNodeMap().get(startTableLabelName);
 
             remainTables.remove(startTableLabelName);
-            nextQuery(currentNode, currentData, relation, originalResultSet, new HashSet<>(remainTables));
+            nextQuery(currentNode, currentData, relation, intermediateResultSet, new HashSet<>(remainTables));
             result.addAll(currentData.get());
 
             if (maxResultLength > 0 && result.size() > maxResultLength) {
@@ -383,10 +385,10 @@ public class CrossSourceQueryEngine {
      * @param refData      与当前节点Join的数据
      * @param remainTables 剩余未查询的表
      */
-    private void nextQuery(VirtualRelation.VirtualNode currentNode,
+    private void nextQuery(LinkRelation.TableNode currentNode,
                            AtomicReference<List<Map<String, Object>>> currentData,
-                           VirtualRelation relation,
-                           OriginalResultSet refData,
+                           LinkRelation relation,
+                           IntermediateResultSet refData,
                            Set<String> remainTables) {
         Map<String, JoinProfile> nextList = currentNode.next();
         Map<String, JoinProfile> prevList = currentNode.prev();
@@ -399,7 +401,7 @@ public class CrossSourceQueryEngine {
         }
     }
 
-    private static String[][] findIndex(VirtualRelation.VirtualNode node) {
+    private static String[][] findIndex(LinkRelation.TableNode node) {
         /*
          * 获取索引字段
          *
@@ -486,33 +488,32 @@ public class CrossSourceQueryEngine {
 
 
     /**
-     * 原始表的查询结果
+     * 中间查询结果
      */
-    private static class OriginalResultSet {
+    private static class IntermediateResultSet {
 
         @Getter
         private final String name;
 
         private final String[][] indexField;
 
-        private final Map<String, Map<IndexKey, List<Object[]>>> index;
+        private final Map<String, Map<IndexKey, List<Map<String, Object>>>> index;
 
-        private final List<Object[]> data = new ArrayList<>(32);
+        private final List<Map<String, Object>> data = new ArrayList<>(32);
 
-        public List<Object[]> getMatchData(String indexName, IndexKey indexKey) {
+        public List<Map<String, Object>> getMatchData(String indexName, IndexKey indexKey) {
             return Optional.ofNullable(
                     Objects.requireNonNull(this.index.get(indexName),
                             "index name '" + indexName + "' is not exist").get(indexKey))
                     .orElse(Collections.emptyList());
         }
 
-        public void add(Map<String, Object> object, int lineNumber) {
-            Object[] obj = new Object[]{object, lineNumber};
-            this.data.add(obj);
-            buildIndex(indexField, index, obj);
+        public void add(Map<String, Object> object) {
+            this.data.add(object);
+            buildIndex(indexField, index, object);
         }
 
-        private OriginalResultSet(String name, String[][] indexField) {
+        private IntermediateResultSet(String name, String[][] indexField) {
             this.name = name;
             List<String[]> indexs = new ArrayList<>(8);
             for (String[] strings : indexField) {
@@ -529,11 +530,6 @@ public class CrossSourceQueryEngine {
         }
     }
 
-
-    private String[] distinctIndexName(String[] index) {
-        return Stream.of(index).distinct().toArray(String[]::new);
-    }
-
     private static String[][] distinctIndexName(String[][] compositeIndex) {
         // String[]比较时不会比较内部的元素, 将其连接为字符串去重后再还原
         return Stream.of(compositeIndex)
@@ -543,20 +539,12 @@ public class CrossSourceQueryEngine {
                 .toArray(String[][]::new);
     }
 
-    private void buildIndex(String[] index,
-                            Map<String, Map<Object, List<Map<String, Object>>>> indexingMap,
-                            Map<String, Object> object) {
-        for (String iFields : index)
-            indexingMap.computeIfAbsent(iFields, k -> new HashMap<>())
-                    .computeIfAbsent(object.get(iFields), k -> new ArrayList<>(8)).add(object);
-    }
-
     @SuppressWarnings("unchecked")
     private static void buildIndex(String[][] compositeIndex,
-                                   Map<String, Map<IndexKey, List<Object[]>>> compositeIndexMap,
-                                   Object[] object) {
+                                   Map<String, Map<IndexKey, List<Map<String, Object>>>> compositeIndexMap,
+                                   Map<String, Object> object) {
         for (String[] index : compositeIndex) {
-            Object[] val = Stream.of(index).map(o -> (((Map<String, Object>) object[0]).get(o))).toArray();
+            Object[] val = Stream.of(index).map(object::get).toArray();
             String indexName = String.join(":", index);
             IndexKey indexKey = IndexKey.of(val);
             compositeIndexMap.computeIfAbsent(indexName, k -> new HashMap<>(16))
@@ -571,7 +559,7 @@ public class CrossSourceQueryEngine {
      * @return 驱动表的表明(别名)
      * @throws IllegalStateException 无法找到驱动表
      */
-    private String analysisDrivingTable(VirtualRelation relation) {
+    private String analysisDrivingTable(LinkRelation relation) {
         // 如果只有一个表有查询条件, 直接返回该表名
         if(relation.getWhereCases().size() == 1)
             return relation.getWhereCases().keySet().stream().findFirst().orElse(null);

@@ -1,19 +1,13 @@
 package ink.andromeda.strawberry.test;
 
 import ink.andromeda.strawberry.core.CrossSourceSQLParser;
-import ink.andromeda.strawberry.core.VirtualRelation;
+import ink.andromeda.strawberry.core.LinkRelation;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.Test;
 import org.springframework.util.StopWatch;
 
 import java.io.IOException;
-import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
 import java.util.*;
-import java.util.stream.Collectors;
 
 import static ink.andromeda.strawberry.core.CrossSourceQueryEngine.$_LINE_NUMBER_STR;
 import static ink.andromeda.strawberry.tools.GeneralTools.toJSONString;
@@ -41,7 +35,7 @@ public class StaticTest {
         StopWatch stopWatch = new StopWatch("sql analysis");
         stopWatch.start();
         CrossSourceSQLParser sqlParser = new CrossSourceSQLParser(sql);
-        VirtualRelation relation = sqlParser.analysis();
+        LinkRelation relation = sqlParser.analysis();
         stopWatch.stop();
         log.info(stopWatch.prettyPrint());
         log.info(toJSONString(relation));

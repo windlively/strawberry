@@ -1,0 +1,37 @@
+<configuration debug="false" scan="false" scanPeriod="10 seconds">
+<!---->
+    <property name="encoding" value="UTF-8"/>
+
+<!--    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">-->
+<!--        <file>${log.root}/${appName}/${appName}.log</file>-->
+<!--        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">-->
+<!--            <level>INFO</level>-->
+<!--        </filter>-->
+<!--        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">-->
+<!--            <FileNamePattern>${log.root}/${appName}/${appName}.log.%d{yyyy-MM-dd}.gz</FileNamePattern>-->
+<!--            <maxHistory>15</maxHistory>-->
+<!--        </rollingPolicy>-->
+<!--        <encoder>-->
+<!--            <pattern>${normal-pattern}</pattern>-->
+<!--            <charset>${encoding}</charset>-->
+<!--        </encoder>-->
+<!--    </appender>-->
+
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <!-- encoders are assigned the type ch.qos.logback.classic.encoder.PatternLayoutEncoder
+            by default -->
+        <encoder>
+            <pattern>
+                %date{yyyy-MM-dd HH:mm:ss.SSS} | %highlight(%-5level) | %green(%thread) | %magenta(%logger{36}) - %cyan(%msg%n)
+            </pattern>
+        </encoder>
+    </appender>
+    <root level="INFO">
+        <appender-ref ref="STDOUT"/>
+    </root>
+
+    <logger name="ink.andromeda.strawberry" level="debug" additivity="false">
+        <appender-ref ref="STDOUT"/>
+    </logger>
+
+</configuration>

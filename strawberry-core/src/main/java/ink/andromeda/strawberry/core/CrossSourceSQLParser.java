@@ -5,14 +5,10 @@ import ink.andromeda.strawberry.tools.Pair;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
-import java.lang.reflect.Field;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
-
-import static ink.andromeda.strawberry.tools.GeneralTools.toJSONString;
 
 /**
  * 跨数据源sql解析工具
@@ -128,21 +124,20 @@ public class CrossSourceSQLParser {
     }
 
     // 解析sql
-    public VirtualRelation analysis() {
+    public LinkRelation analysis() {
         Matcher findFirstTableMatcher = FIND_FIRST_TABLE_REG.matcher(sql);
-
-        String prevTable;
-        VirtualRelation virtualRelation = new VirtualRelation();
-        List<String> fields = new ArrayList<>(32);
-        Map<String, VirtualRelation.VirtualNode> virtualNodeMap = new HashMap<>();
+        List<String> tables = new ArrayList<>(4);
+        LinkRelation linkRelation = new LinkRelation();
+        Map<String, LinkRelation.TableNode> virtualNodeMap = new HashMap<>();
         // k: 表别名, v: 原表全名
         Map<String, String> tableNameRef = new HashMap<>(4);
 
         if (findFirstTableMatcher.find()) {
             String str = findFirstTableMatcher.group();
             String[] strings = splitSQLTable(str);
-            prevTable = strings[1];
-            virtualNodeMap.put(prevTable, new VirtualRelation.VirtualNode(prevTable));
+            String prevTable = strings[1];
+            tables.add(prevTable);
+            virtualNodeMap.put(prevTable, new LinkRelation.TableNode(prevTable));
             tableNameRef.put(strings[1], strings[0]);
         } else {
             throw new IllegalArgumentException("not found first table in sql");
@@ -175,11 +170,11 @@ public class CrossSourceSQLParser {
                     if (tableNameRef.containsKey(currentTable))
                         throw new IllegalArgumentException("table label name '" + currentTable + "' is duplicated");
                     tableNameRef.put(currentTable, strings[0]);
-                    virtualNodeMap.put(currentTable, new VirtualRelation.VirtualNode(currentTable));
+                    tables.add(currentTable);
+                    virtualNodeMap.put(currentTable, new LinkRelation.TableNode(currentTable));
                     isFirst = false;
                     continue;
                 }
-
 
                 /*
                  * 将 "t0.f0 = t1.f0" 分割为: ["t0", "f0", "t1", "f0"]
@@ -190,8 +185,8 @@ public class CrossSourceSQLParser {
                 if (!(Objects.equals(currentTable, strings[0]) || Objects.equals(currentTable, strings[2]))) {
                     throw new IllegalArgumentException("join condition '" + s + "' not contains table " + currentTable);
                 }
-                VirtualRelation.VirtualNode node0 = Objects.requireNonNull(virtualNodeMap.get(strings[0]), "bad condition: " + s + ", previous table not contain " + strings[0]);
-                VirtualRelation.VirtualNode node1 = Objects.requireNonNull(virtualNodeMap.get(strings[2]), "bad condition: " + s + ", previous table not contain " + strings[2]);
+                LinkRelation.TableNode node0 = Objects.requireNonNull(virtualNodeMap.get(strings[0]), "bad condition: " + s + ", previous table not contain " + strings[0]);
+                LinkRelation.TableNode node1 = Objects.requireNonNull(virtualNodeMap.get(strings[2]), "bad condition: " + s + ", previous table not contain " + strings[2]);
                 // 由于是顺序解析, currentTable一定是当前已解析表名的最后一个, 其余表均在currentTable的前面
                 if (node0.tableName().equals(currentTable)) {
                     // 若[0]对应了当前表的名称, 则node0作为右侧, node1作为左侧
@@ -202,12 +197,12 @@ public class CrossSourceSQLParser {
                 }
 
             }
-            prevTable = currentTable;
         }
-        virtualRelation.setTableLabelRef(tableNameRef);
-        virtualRelation.setVirtualNodeMap(virtualNodeMap);
-        virtualRelation.setWhereCases(getWhereCase());
-        return virtualRelation;
+        linkRelation.setTableLabelRef(tableNameRef);
+        linkRelation.setVirtualNodeMap(virtualNodeMap);
+        linkRelation.setTables(tables);
+        linkRelation.setWhereCases(getWhereCase());
+        return linkRelation;
     }
 
     private String[] splitSQLTable(String str) {
@@ -216,7 +211,7 @@ public class CrossSourceSQLParser {
                 .toArray(String[]::new);
     }
 
-    private void addJoinField(VirtualRelation.VirtualNode left, VirtualRelation.VirtualNode right, String leftField, String rightField, JoinType joinType) {
+    private void addJoinField(LinkRelation.TableNode left, LinkRelation.TableNode right, String leftField, String rightField, JoinType joinType) {
         JoinProfile profile0 = left.next().computeIfAbsent(right.tableName(), k -> new JoinProfile(joinType));
         String leftFieldFullName = left.tableName() + "." + leftField;
         String rightFieldFullName = right.tableName() + "." + rightField;
