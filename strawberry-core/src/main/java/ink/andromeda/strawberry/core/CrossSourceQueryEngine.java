@@ -88,18 +88,21 @@ public class CrossSourceQueryEngine {
     private final Function<String, DataSource> obtainDataSourceFunction;
 
     public QueryResults executeQuery(String sql) throws Exception {
-        return executeQuery(sql, -1);
-    }
-
-    public QueryResults executeQuery(String sql, int limit) throws Exception {
 
         CrossSourceSQLParser crossSourceSQLParser = new CrossSourceSQLParser(sql);
 
         log.debug("start query: {}", crossSourceSQLParser.getSql());
 
-        LinkRelation linkRelation = crossSourceSQLParser.analysis();
+        LinkRelation linkRelation = crossSourceSQLParser.analysisRelation();
 
-        String drivingTable = analysisDrivingTable(linkRelation);
+        QueryCondition queryCondition = crossSourceSQLParser.analysisWhereCondition();
+
+        return executeQuery(linkRelation, queryCondition);
+    }
+
+    public QueryResults executeQuery(LinkRelation linkRelation, QueryCondition queryCondition) throws Exception {
+
+        String drivingTable = analysisDrivingTable(linkRelation, queryCondition);
 
         Map<String, LinkRelation.TableNode> virtualNodeMap = linkRelation.getVirtualNodeMap();
 
@@ -131,11 +134,29 @@ public class CrossSourceQueryEngine {
             });
         });
 
-        List<Map<String, Object>> result = executeQuery(drivingTable, linkRelation, remainTables, limit);
+        List<Map<String, Object>> result = executeQuery(drivingTable, linkRelation, queryCondition, remainTables, queryCondition.limit());
+        List<ConditionItem> conditionItems = queryCondition.crossSourceCondition();
+        // 内部条件筛选
+        if (conditionItems != null && conditionItems.size() > 0) {
+            result = result.stream().filter(m -> conditionItems.stream().allMatch(c -> c.operator().isTrue(m.get(c.leftField()), new Object[]{m.get(c.rightFields()[0])})))
+                    .collect(Collectors.toList());
+        }
+        List<Pair<String, Boolean>> orderedField = queryCondition.orderedFields();
+        // 排序字段
+        if (orderedField != null && orderedField.size() > 0) {
+            result.sort((o1, o2) -> {
+                for (Pair<String, Boolean> of : orderedField) {
+                    int i = Operator.objectComparator.compare(o1.get(of.getKey()), o2.get(of.getKey()));
+                    if (i != 0) return of.getRight() ? i : -i;
+                }
+                return 0;
+            });
+        }
+
 
         countDownLatch.await();
         String[] fields = fs.stream().flatMap(Collection::stream).toArray(String[]::new);
-        QueryResults resultSet = new QueryResults(sql, result, fields);
+        QueryResults resultSet = new QueryResults(linkRelation.getSql() + " " + queryCondition.sqlWhereClause(), result, fields);
         log.debug("data size: {}", result.size());
         return resultSet;
     }
@@ -157,6 +178,7 @@ public class CrossSourceQueryEngine {
                                 AtomicReference<List<Map<String, Object>>> currentData,
                                 IntermediateResultSet refData,
                                 LinkRelation relation,
+                                QueryCondition condition,
                                 Set<String> remainTables) {
         // 如果剩余的表不包含当前表, 则表示当前表已经处理过, 退出查询,
         if (!remainTables.contains(currentTableLabelName))
@@ -166,7 +188,7 @@ public class CrossSourceQueryEngine {
         Set<Pair<String, String>> joinFieldPairs = joinProfile.joinFields();
         JoinType joinType = joinProfile.joinType();
         byte joinIdentifier = getJoinIdentifier(asRight, joinType);
-        boolean hasQueryParam = relation.getWhereCases().get(currentTableLabelName) != null;
+        boolean hasQueryParam = condition.conditions().get(currentTableLabelName) != null;
 
         // 已有结果数据为空
         if (currentData.get().isEmpty()) {
@@ -204,7 +226,7 @@ public class CrossSourceQueryEngine {
             SQL.append(String.join(" AND ", joinStatements));
             if (hasQueryParam) {
                 SQL.append(" AND ");
-                SQL.append(toSQLCondition(currentTableLabelName, tableName, relation.getWhereCases().get(currentTableLabelName)));
+                SQL.append(toSQLCondition(currentTableLabelName, tableName, condition.conditions().get(currentTableLabelName)));
             }
 
             LinkRelation.TableNode node = relation.getVirtualNodeMap().get(currentTableLabelName);
@@ -232,7 +254,7 @@ public class CrossSourceQueryEngine {
                     for (i = 1; i <= columnCount; i++) {
                         object.put(labelNames[i], resultSet.getObject(i));
                     }
-                    object.put($_LINE_NUMBER_STR, lineNumber ++);
+                    object.put($_LINE_NUMBER_STR, lineNumber++);
                     intermediateResultSet.add(object);
                 }
             } catch (SQLException ex) {
@@ -285,8 +307,8 @@ public class CrossSourceQueryEngine {
                 currentData.set(newResult);
             }
             log.info(SQL.toString());
-        }else {
-            if(!currentData.get().isEmpty()){
+        } else {
+            if (!currentData.get().isEmpty()) {
                 if (hasQueryParam
                     || joinIdentifier == INNER_JOIN
                     || joinIdentifier == MASTER_AS_WAITING_JOIN_DATA) {
@@ -295,7 +317,7 @@ public class CrossSourceQueryEngine {
             }
         }
         remainTables.remove(currentTableLabelName);
-        nextQuery(currentNode, currentData, relation, intermediateResultSet, remainTables);
+        nextQuery(currentNode, currentData, relation, condition, intermediateResultSet, remainTables);
     }
 
     /**
@@ -307,7 +329,7 @@ public class CrossSourceQueryEngine {
      * @param limit               限制条数, -1为不限制
      * @return 结果数据
      */
-    private List<Map<String, Object>> executeQuery(String startTableLabelName, LinkRelation relation,
+    private List<Map<String, Object>> executeQuery(String startTableLabelName, LinkRelation relation, QueryCondition condition,
                                                    Set<String> remainTables, int limit) {
         String tableFullName = relation.getTableLabelRef().get(startTableLabelName);
         String[] splitTableFullName = splitTableFullName(tableFullName);
@@ -317,7 +339,7 @@ public class CrossSourceQueryEngine {
 
         DataSource dataSource = getNonNullDataSource(source);
         StringBuilder SQL = new StringBuilder("SELECT * FROM ").append(schema).append(".").append(tableName).append(" WHERE ");
-        List<String> wheres = Objects.requireNonNull(relation.getWhereCases().get(startTableLabelName));
+        List<String> wheres = Objects.requireNonNull(condition.conditions().get(startTableLabelName));
         String conditions = toSQLCondition(startTableLabelName, tableName, wheres);
         SQL.append(conditions);
         LinkRelation.TableNode node = relation.getVirtualNodeMap().get(startTableLabelName);
@@ -359,7 +381,7 @@ public class CrossSourceQueryEngine {
             LinkRelation.TableNode currentNode = relation.getVirtualNodeMap().get(startTableLabelName);
 
             remainTables.remove(startTableLabelName);
-            nextQuery(currentNode, currentData, relation, intermediateResultSet, new HashSet<>(remainTables));
+            nextQuery(currentNode, currentData, relation, condition, intermediateResultSet, new HashSet<>(remainTables));
             result.addAll(currentData.get());
 
             if (maxResultLength > 0 && result.size() > maxResultLength) {
@@ -388,16 +410,17 @@ public class CrossSourceQueryEngine {
     private void nextQuery(LinkRelation.TableNode currentNode,
                            AtomicReference<List<Map<String, Object>>> currentData,
                            LinkRelation relation,
+                           QueryCondition condition,
                            IntermediateResultSet refData,
                            Set<String> remainTables) {
         Map<String, JoinProfile> nextList = currentNode.next();
         Map<String, JoinProfile> prevList = currentNode.prev();
         if (!nextList.isEmpty()) {
-            nextList.forEach((tableLabel, joinFields) -> recursiveQuery(tableLabel, true, joinFields, currentData, refData, relation, remainTables));
+            nextList.forEach((tableLabel, joinFields) -> recursiveQuery(tableLabel, true, joinFields, currentData, refData, relation, condition, remainTables));
         }
 
         if (!prevList.isEmpty()) {
-            prevList.forEach((tableLabel, joinFields) -> recursiveQuery(tableLabel, false, joinFields, currentData, refData, relation, remainTables));
+            prevList.forEach((tableLabel, joinFields) -> recursiveQuery(tableLabel, false, joinFields, currentData, refData, relation, condition, remainTables));
         }
     }
 
@@ -559,20 +582,21 @@ public class CrossSourceQueryEngine {
      * @return 驱动表的表明(别名)
      * @throws IllegalStateException 无法找到驱动表
      */
-    private String analysisDrivingTable(LinkRelation relation) {
+    private String analysisDrivingTable(LinkRelation relation, QueryCondition condition) {
+        Map<String, List<String>> conditionMap = condition.conditions();
         // 如果只有一个表有查询条件, 直接返回该表名
-        if(relation.getWhereCases().size() == 1)
-            return relation.getWhereCases().keySet().stream().findFirst().orElse(null);
+        if (conditionMap.size() == 1)
+            return conditionMap.keySet().stream().findFirst().orElse(null);
 
-        CountDownLatch countDownLatch = new CountDownLatch(relation.getWhereCases().size());
+        CountDownLatch countDownLatch = new CountDownLatch(conditionMap.size());
 
         // 会有多线程竞争的bug, TreeSet非线程安全
         // TreeSet<Pair<String, Long>> record = new TreeSet<>(Comparator.comparingLong(Pair::getRight));
 
-        Map<Long, String> record = new ConcurrentHashMap<>(relation.getWhereCases().size());
+        Map<Long, String> record = new ConcurrentHashMap<>(conditionMap.size());
 
         // 遍历所有表的条件组, 多线程方式
-        relation.getWhereCases().forEach((k, v) -> {
+        conditionMap.forEach((k, v) -> {
             SIMPLE_TASK_POOL_EXECUTOR.submit(() -> {
                 try {
                     // 获取表的全名

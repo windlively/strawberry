@@ -222,9 +222,9 @@ public class ContextServiceTest {
     public void joinTest2() throws Exception {
         String sql = "select * from test.test.join_test_a ta " +
                      " right join test.test.join_test_b tb on ta.f1=tb.f2 " +
-                     " left join test.test.join_test_a td on td.f1=tb.f2 " +
-                     " left join test.test.join_test_c tc on tc.f1=td.f1 " +
-                     "where tc.f1=0";
+                     // " right join test.test.join_test_a td on td.f1=tb.f2 " +
+                     " left join test.test.join_test_c tc on tc.f1=tb.f1 " +
+                     "where tc.f1 between 0 and 1 order by tb.f2 desc, tc.f3 asc, tc.f3 limit 2";
         CrossSourceQueryEngine crossSourceQueryEngine =
                 new CrossSourceQueryEngine(s -> metaInfoDao.getTableMetaInfo(s), s -> dynamicDataSource.getDataSource(s));
 

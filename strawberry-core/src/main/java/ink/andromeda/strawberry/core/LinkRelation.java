@@ -19,6 +19,10 @@ public class LinkRelation {
 
     @Setter
     @Getter
+    private String sql;
+
+    @Setter
+    @Getter
     private Map<String, TableNode> virtualNodeMap;
 
     @Setter
@@ -28,14 +32,6 @@ public class LinkRelation {
     @Setter
     @Getter
     private Map<String, String> tableLabelRef;
-
-    @Setter
-    @Getter
-    private Map<String, List<String>> whereCases;
-
-    @Setter
-    @Getter
-    private List<String> innerCondition;
 
     @Getter
     @Accessors(fluent = true)

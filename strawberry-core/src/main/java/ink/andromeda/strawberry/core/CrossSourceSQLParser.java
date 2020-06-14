@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -26,7 +27,7 @@ public class CrossSourceSQLParser {
      */
     private final static Pattern SQL_FORMAT_REG =
             Pattern.compile("\\s*((?i)SELECT)\\s+.+\\s+((?i)FROM)\\s+(\\w+(\\.\\w+){2})\\s+((?i)AS\\s+)?\\w+\\s+(\\s*(((?i)(LEFT|RIGHT|OUTER|FULL)\\s+)?((?i)JOIN)\\s+(\\w+(\\.\\w+){2}))\\s+((?i)AS\\s+)?\\w+\\s+" +
-                            "((?i)ON)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+))(\\s+((?i)AND)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+)))*)+\\s+((?i)WHERE).*");
+                            "((?i)ON)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+))(\\s+((?i)AND)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+)))*)+(\\s+((?i)WHERE).*?((?i)ORDER\\s+(?i)BY\\s+((\\w+\\.\\w+(\\s+?\\bDESC|ASC\\b?)?)|(\\((\\w+\\.\\w+(\\s+?\\bDESC|ASC\\b?)?(\\s*?,\\s*?)?)+\\))\\s*)+)?((?i)LIMIT\\s+\\d+\\s+)?)?");
 
     /**
      * 获取表名的正则
@@ -66,13 +67,31 @@ public class CrossSourceSQLParser {
                             "((?i)ON)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+))(\\s+((?i)AND)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+)))*)\\s+(?=((\\bLEFT|RIGHT|OUTER|FULL\\b)\\s+)?JOIN|WHERE\\s+)", Pattern.CASE_INSENSITIVE);
 
     /**
-     * 截取SQL的WHERE条件部分
+     * 截取SQL的WHERE子句
      */
     private final static Pattern FIND_WHERE_CLAUSE_REG = Pattern.compile("\\bWHERE\\b[\\s\\S]*", Pattern.CASE_INSENSITIVE);
 
+    /**
+     * 获取每一条条件语句
+     */
     private final static Pattern FIND_WHERE_CASE_REG = Pattern.compile("(?<=(WHERE|AND))((\\s+?\\w+\\.\\w+\\s+?\\bBETWEEN\\b.+?(\\bAND\\b).+?(?=(\\bAND\\b|$)))|(.+?(?=\\bAND\\b|$)))", Pattern.CASE_INSENSITIVE);
 
-    private final static Pattern FIND_JOIN_TYPE_REG = Pattern.compile("(?i)((\\bLEFT|RIGHT|OUTER|FULL\\b)\\s+)?\\bJOIN\\b");
+    /**
+     * 获取连接类型
+     */
+    private final static Pattern FIND_JOIN_TYPE_REG = Pattern.compile("(?i)((\\bLEFT|RIGHT|OUTER|FULL\\b)\\s+)?\\bJOIN\\b", Pattern.CASE_INSENSITIVE);
+
+    private final static String FIELD_REG = "\\b\\w+\\.\\w+\\b";
+
+    private final static Pattern IS_INNER_CONDITION_REG = Pattern.compile(FIELD_REG + "\\s*(=|<|<=|>|>=|!=)\\s*(" + FIELD_REG + ")", Pattern.CASE_INSENSITIVE);
+
+    private final static Pattern FIND_ORDERED_CLAUSE = Pattern.compile("((?i)ORDER\\s+(?i)BY(\\s*\\w+\\.\\w+\\s*(\\bDESC|ASC\\b)?(,\\s*)?)+)", Pattern.CASE_INSENSITIVE);
+
+    private final static Pattern FIND_LIMIT_CLAUSE = Pattern.compile("((?i)\\bLIMIT\\s+\\d+)", Pattern.CASE_INSENSITIVE);
+
+    private final static Pattern FIND_STR_IN_PARENTHESES = Pattern.compile("(?<=\\().*(?=\\))");
+
+    private final static Pattern FIND_ORDERED_FIELD_REG = Pattern.compile("\\w+\\.\\w+(\\s+DESC|ASC)?", Pattern.CASE_INSENSITIVE);
 
     @Getter
     private final String sql;
@@ -81,7 +100,10 @@ public class CrossSourceSQLParser {
 
     public CrossSourceSQLParser(String sql) {
         Objects.requireNonNull(sql);
-        this.sql = sql.replaceAll("[\\t\\n\\r\\f]", " ");
+        sql = sql.replaceAll("[\\t\\n\\r\\f]", " ").trim();
+        if (sql.charAt(sql.length() - 1) == ';')
+            sql = sql.substring(0, sql.length() - 1);
+        this.sql = sql;
         if (!this.sql.matches(SQL_FORMAT_REG.pattern())) {
             throw new IllegalArgumentException("wrong sql format: " + this.sql);
         }
@@ -114,7 +136,7 @@ public class CrossSourceSQLParser {
         List<String> joinConditions = new ArrayList<>();
         while (matcher.find()) {
             String line = matcher.group();
-            log.info(line);
+            log.debug(line);
             Matcher innerMatcher = SPLIT_JOIN_CONDITION_REG.matcher(matcher.group());
             while (innerMatcher.find()) {
                 joinConditions.add(innerMatcher.group().trim());
@@ -124,7 +146,7 @@ public class CrossSourceSQLParser {
     }
 
     // 解析sql
-    public LinkRelation analysis() {
+    public LinkRelation analysisRelation() {
         Matcher findFirstTableMatcher = FIND_FIRST_TABLE_REG.matcher(sql);
         List<String> tables = new ArrayList<>(4);
         LinkRelation linkRelation = new LinkRelation();
@@ -149,21 +171,21 @@ public class CrossSourceSQLParser {
             String joinSql = matcher.group().trim();
             JoinType joinType;
             Matcher findJoinTypeMatcher = FIND_JOIN_TYPE_REG.matcher(joinSql);
-            log.info("join clause: {}", joinSql);
+            log.debug("join clause: {}", joinSql);
             if (findJoinTypeMatcher.find()) {
                 joinType = JoinType.of(findJoinTypeMatcher.group());
             } else {
                 throw new IllegalArgumentException("could not found join type in clause: " + joinSql);
             }
 
-            log.info("join type: {}", joinType);
+            log.debug("join type: {}", joinType);
 
             Matcher innerMatcher = SPLIT_JOIN_CLAUSE_REG.matcher(joinSql);
             boolean isFirst = true;
             String currentTable = null;
             while (innerMatcher.find()) {
                 String s = innerMatcher.group();
-                log.info(innerMatcher.group());
+                log.debug(innerMatcher.group());
                 if (isFirst) {
                     String[] strings = splitSQLTable(s);
                     currentTable = strings[1];
@@ -201,7 +223,6 @@ public class CrossSourceSQLParser {
         linkRelation.setTableLabelRef(tableNameRef);
         linkRelation.setVirtualNodeMap(virtualNodeMap);
         linkRelation.setTables(tables);
-        linkRelation.setWhereCases(getWhereCase());
         return linkRelation;
     }
 
@@ -216,7 +237,7 @@ public class CrossSourceSQLParser {
         String leftFieldFullName = left.tableName() + "." + leftField;
         String rightFieldFullName = right.tableName() + "." + rightField;
 
-        if(!Objects.equals(profile0.joinType(), joinType)){
+        if (!Objects.equals(profile0.joinType(), joinType)) {
             throw new IllegalArgumentException(String.format("left table '%s' an right table '%s' is '%s', but condition '%s=%s' is '%s'",
                     left.tableName(), right.tableName(), profile0.joinType(), leftFieldFullName, rightFieldFullName, joinType));
         }
@@ -224,7 +245,7 @@ public class CrossSourceSQLParser {
 
         // left.next().computeIfAbsent(right.tableName(), k -> new ArrayList<>()).add(Pair.of(left.tableName() + "." + leftField, right.tableName() + "." + rightField));
         JoinProfile profile1 = right.prev().computeIfAbsent(left.tableName(), k -> new JoinProfile(joinType));
-        if(!Objects.equals(profile1.joinType(), joinType)){
+        if (!Objects.equals(profile1.joinType(), joinType)) {
             throw new IllegalArgumentException(String.format("left table '%s' an right table '%s' is '%s', but condition '%s=%s' is '%s'",
                     left.tableName(), right.tableName(), profile1.joinType(), leftFieldFullName, rightFieldFullName, joinType));
         }
@@ -233,24 +254,71 @@ public class CrossSourceSQLParser {
 
     }
 
-    private Map<String, List<String>> getWhereCase() {
+    public QueryCondition analysisWhereCondition() {
         Matcher matcher = FIND_WHERE_CLAUSE_REG.matcher(sql);
+        QueryCondition queryCondition = new QueryCondition();
         Map<String, List<String>> cases = new HashMap<>();
+        List<ConditionItem> innerCase = new ArrayList<>();
         if (matcher.find()) {
             String whereClause = matcher.group();
-            log.info("where clause: {}", whereClause);
+            log.debug("where clause: {}", whereClause);
+            queryCondition.sqlWhereClause(whereClause.replaceAll("(?i)where","").trim());
+            Matcher orderedMatcher = FIND_ORDERED_CLAUSE.matcher(whereClause);
+            if (orderedMatcher.find()) {
+                String orderedClause = orderedMatcher.group();
+                if(orderedClause.matches("(?i)\\bdesc\\s+$")){
+
+                }
+                log.info("order clause: {}", orderedClause);
+                Matcher orderedFieldMatcher = FIND_ORDERED_FIELD_REG.matcher(orderedClause);
+                List<Pair<String, Boolean>> orderedField = new ArrayList<>();
+                while (orderedFieldMatcher.find()){
+                    String str = orderedFieldMatcher.group().trim();
+                    if(str.matches(".*(?i)desc\\s*$")){
+                        orderedField.add(Pair.of(str.split("\\s+")[0], false));
+                    }else
+                        orderedField.add(Pair.of(str.split("\\s+")[0], true));
+                }
+
+                log.debug("order by: {}", orderedField);
+                queryCondition.orderedFields(orderedField);
+                whereClause = whereClause.replaceAll(FIND_ORDERED_CLAUSE.pattern(), "").trim();
+            }
+            Matcher limitMatcher = FIND_LIMIT_CLAUSE.matcher(whereClause);
+            if (limitMatcher.find()) {
+                String limitCount = limitMatcher.group().replaceAll("(?i)limit\\s+?", "").trim();
+                log.debug("limit: {}", limitCount);
+                queryCondition.limit(Integer.parseInt(limitCount));
+                whereClause = whereClause.replaceAll(FIND_LIMIT_CLAUSE.pattern(), "").trim();
+            }
             Matcher caseMatcher = FIND_WHERE_CASE_REG.matcher(whereClause);
             while (caseMatcher.find()) {
                 String whereCase = caseMatcher.group().trim();
                 String tableName = whereCase.substring(0, whereCase.indexOf('.'));
-                cases.computeIfAbsent(tableName, k -> new ArrayList<>()).add(whereCase);
-                log.info("where case: {}", whereCase);
+                log.debug("where case: {}", whereCase);
+                if (whereCase.matches(IS_INNER_CONDITION_REG.pattern())) {
+                    String[] splitCase = whereCase.split("(=|<|<=|>|>=|!=)");
+                    String rightPart = splitCase[1].trim();
+                    ConditionItem conditionItem = new ConditionItem();
+                    conditionItem.leftField(splitCase[0]);
+                    if(rightPart.matches("\\w+\\.\\w+")) {
+                        conditionItem.rightFields(new String[]{splitCase[1]});
+                        conditionItem.rightFields(new String[]{rightPart});
+                    } else
+                        throw new IllegalArgumentException("not support: " + whereCase);
+
+                    innerCase.add(conditionItem);
+                } else {
+                    cases.computeIfAbsent(tableName, k -> new ArrayList<>()).add(whereCase);
+                }
             }
         } else {
             throw new IllegalArgumentException("not found where clause");
         }
-        log.info(cases.toString());
-        return cases;
+        log.debug(cases.toString());
+        queryCondition.conditions(cases);
+        queryCondition.crossSourceCondition(innerCase);
+        return queryCondition;
     }
 
 }

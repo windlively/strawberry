@@ -31,11 +31,12 @@ public class StaticTest {
         String sql = " SELECT * FROM s1.d1.t1 AS t1\n" +
                      " left JOIN s1.d2.t2 t2 ON t1.f1 = t2.f1 AND t1.f3 = t2.f4\n and t1.f2 = t2.f3" +
                      " right join s2.d2.t3 AS t3 ON  t2.f2 = t3.f3 AND t2.f1 = t3.f1 and t3.f5=t1.f1\n" +
-                     " WHERE t1.f2 = 'xxx' AND t1.f2 > 'xxx' AND t3.f1 IN ('xxx', 'xxx') AND t1.f3 BETWEEN 'xxx' AND 'xxx' AND t2.f3 LIKE '%s' AND t2.f1 between '-1' and '000';";
+                     " WHERE t1.f2 = 'xxx' AND t1.f2 > 'xxx' AND t3.f1 IN ('xxx', 'xxx') AND t1.f3 BETWEEN 'xxx' AND 'xxx' AND t2.f3 LIKE '%s' AND t2.f1 between '-1' and '000' and t1.f1 = t2.f3 " +
+                     " order bY (t2.f5, t3.f6) limit 12;";
         StopWatch stopWatch = new StopWatch("sql analysis");
         stopWatch.start();
         CrossSourceSQLParser sqlParser = new CrossSourceSQLParser(sql);
-        LinkRelation relation = sqlParser.analysis();
+        LinkRelation relation = sqlParser.analysisRelation();
         stopWatch.stop();
         log.info(stopWatch.prettyPrint());
         log.info(toJSONString(relation));
