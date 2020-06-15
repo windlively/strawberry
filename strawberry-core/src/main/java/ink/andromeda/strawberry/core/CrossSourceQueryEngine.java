@@ -9,6 +9,8 @@ import ink.andromeda.strawberry.tools.SQLTemplate;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.util.CollectionUtils;
+import org.springframework.util.StopWatch;
 
 import javax.sql.DataSource;
 import java.sql.*;
@@ -45,6 +47,9 @@ public class CrossSourceQueryEngine {
 
     private static final int DEFAULT_BASE_QUERY_COUNT = 1000;
 
+    /**
+     * 最大查询长度
+     */
     private static final int DEFAULT_MAX_RESULT_LENGTH = 20000;
 
     public final static String $_LINE_NUMBER_STR = "$LINE_NUMBER";
@@ -92,12 +97,16 @@ public class CrossSourceQueryEngine {
         CrossSourceSQLParser crossSourceSQLParser = new CrossSourceSQLParser(sql);
 
         log.debug("start query: {}", crossSourceSQLParser.getSql());
-
+        StopWatch stopWatch = new StopWatch();
+        stopWatch.start("parser sql");
         LinkRelation linkRelation = crossSourceSQLParser.analysisRelation();
-
         QueryCondition queryCondition = crossSourceSQLParser.analysisWhereCondition();
-
-        return executeQuery(linkRelation, queryCondition);
+        stopWatch.stop();
+        stopWatch.start("execute");
+        QueryResults results = executeQuery(linkRelation, queryCondition);
+        stopWatch.stop();
+        log.debug(stopWatch.prettyPrint());
+        return results;
     }
 
     public QueryResults executeQuery(LinkRelation linkRelation, QueryCondition queryCondition) throws Exception {
@@ -135,28 +144,38 @@ public class CrossSourceQueryEngine {
         });
 
         List<Map<String, Object>> result = executeQuery(drivingTable, linkRelation, queryCondition, remainTables, queryCondition.limit());
-        List<ConditionItem> conditionItems = queryCondition.crossSourceCondition();
-        // 内部条件筛选
-        if (conditionItems != null && conditionItems.size() > 0) {
-            result = result.stream().filter(m -> conditionItems.stream().allMatch(c -> c.operator().isTrue(m.get(c.leftField()), new Object[]{m.get(c.rightFields()[0])})))
-                    .collect(Collectors.toList());
-        }
-        List<Pair<String, Boolean>> orderedField = queryCondition.orderedFields();
-        // 排序字段
-        if (orderedField != null && orderedField.size() > 0) {
-            result.sort((o1, o2) -> {
-                for (Pair<String, Boolean> of : orderedField) {
-                    int i = Operator.objectComparator.compare(o1.get(of.getKey()), o2.get(of.getKey()));
-                    if (i != 0) return of.getRight() ? i : -i;
-                }
-                return 0;
-            });
-        }
 
 
         countDownLatch.await();
-        String[] fields = fs.stream().flatMap(Collection::stream).toArray(String[]::new);
-        QueryResults resultSet = new QueryResults(linkRelation.getSql() + " " + queryCondition.sqlWhereClause(), result, fields);
+        // 输出字段映射关系
+        if(linkRelation.getOutputFields() == null){
+            if(!CollectionUtils.isEmpty(linkRelation.getOutputDescription())) {
+                List<String> outputFields = new ArrayList<>();
+                List<String> outputFieldLabels = new ArrayList<>();
+                linkRelation.getOutputDescription().forEach(desc -> {
+                    String fName = desc.getLeft();
+
+                    if (fName.endsWith(".*")) {
+                        String tableLabelName = fName.substring(0, fName.indexOf('.'));
+                        String fullName = Objects.requireNonNull(tableLabelRef.get(tableLabelName));
+                        List<String> list = obtainTableMetaInfoFunction.apply(fullName).fieldList();
+                        outputFields.addAll(list);
+                        outputFieldLabels.addAll(list);
+                        return;
+                    }
+
+                    outputFields.add(desc.getLeft());
+                    outputFieldLabels.add(desc.getRight());
+                });
+                linkRelation.setOutputFields(outputFields);
+                linkRelation.setOutputFieldLabels(outputFieldLabels);
+            }else {
+                List<String> fList = fs.stream().flatMap(Collection::stream).collect(Collectors.toList());
+                linkRelation.setOutputFields(fList);
+                linkRelation.setOutputFieldLabels(fList);
+            }
+        }
+        QueryResults resultSet = new QueryResults(linkRelation.getSql() + " " + queryCondition.sqlWhereClause(), result, linkRelation.getOutputFields().toArray(new String[0]), linkRelation.getOutputFieldLabels().toArray(new String[0]));
         log.debug("data size: {}", result.size());
         return resultSet;
     }
@@ -386,16 +405,38 @@ public class CrossSourceQueryEngine {
 
             if (maxResultLength > 0 && result.size() > maxResultLength) {
                 log.warn("the result size is out of limit size {}, ignore the following data!", maxResultLength);
+                finishQuery(result, condition);
                 break;
             }
 
             if (limit > 0 && result.size() >= limit || dataCount < baseQueryCount) {
+                finishQuery(result, condition);
                 if (limit > 0 && result.size() > limit)
                     result = result.subList(0, limit);
                 break;
             }
         }
         return result;
+    }
+
+    private void finishQuery(List<Map<String, Object>> result, QueryCondition queryCondition){
+        List<ConditionItem> conditionItems = queryCondition.crossSourceCondition();
+        // 内部条件筛选
+        if (conditionItems != null && conditionItems.size() > 0) {
+            result = result.stream().filter(m -> conditionItems.stream().allMatch(c -> c.operator().isTrue(m.get(c.leftField()), new Object[]{m.get(c.rightFields()[0])})))
+                    .collect(Collectors.toList());
+        }
+        List<Pair<String, Boolean>> orderedField = queryCondition.orderedFields();
+        // 排序字段
+        if (orderedField != null && orderedField.size() > 0) {
+            result.sort((o1, o2) -> {
+                for (Pair<String, Boolean> of : orderedField) {
+                    int i = Operator.objectComparator.compare(o1.get(of.getKey()), o2.get(of.getKey()));
+                    if (i != 0) return of.getRight() ? i : -i;
+                }
+                return 0;
+            });
+        }
     }
 
     /**

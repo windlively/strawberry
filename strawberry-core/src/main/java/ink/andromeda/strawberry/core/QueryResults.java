@@ -1,6 +1,7 @@
 package ink.andromeda.strawberry.core;
 
 import lombok.Getter;
+import org.springframework.util.Assert;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -20,10 +21,19 @@ public final class QueryResults implements Iterable<Object[]>{
     @Getter
     private final String[] fields;
 
+    @Getter
+    private final String[] fieldLabels;
+
     public QueryResults(String sql, List<Map<String, Object>> data, String[] fields) {
+        this(sql, data, fields, fields);
+    }
+
+    public QueryResults(String sql, List<Map<String, Object>> data, String[] fields, String[] fieldLabels) {
         this.sql = sql;
         this.data = Collections.unmodifiableList(data);
+        Assert.isTrue(fields.length==fieldLabels.length, "field list length " + fields.length + " not equals field label list length " + fieldLabels.length);
         this.fields = fields;
+        this.fieldLabels = fieldLabels;
         size = data.size();
     }
 
@@ -31,7 +41,7 @@ public final class QueryResults implements Iterable<Object[]>{
     public String toString(){
         StringBuilder str = new StringBuilder();
         str.append("result table:\n");
-        str.append(String.join("\t", fields)).append("\n");
+        str.append(String.join("\t", fieldLabels)).append("\n");
         for (Object[] objects : this) {
             str.append(Stream.of(objects).map(Objects::toString).collect(Collectors.joining("\t")))
                     .append("\n");

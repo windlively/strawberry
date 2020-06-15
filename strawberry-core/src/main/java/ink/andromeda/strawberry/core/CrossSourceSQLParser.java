@@ -8,7 +8,6 @@ import lombok.extern.slf4j.Slf4j;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -26,8 +25,13 @@ public class CrossSourceSQLParser {
      * (PS, sn: 数据源名称, dn: 数据库名称, tn: 表名, fn: 字段名)
      */
     private final static Pattern SQL_FORMAT_REG =
-            Pattern.compile("\\s*((?i)SELECT)\\s+.+\\s+((?i)FROM)\\s+(\\w+(\\.\\w+){2})\\s+((?i)AS\\s+)?\\w+\\s+(\\s*(((?i)(LEFT|RIGHT|OUTER|FULL)\\s+)?((?i)JOIN)\\s+(\\w+(\\.\\w+){2}))\\s+((?i)AS\\s+)?\\w+\\s+" +
-                            "((?i)ON)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+))(\\s+((?i)AND)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+)))*)+(\\s+((?i)WHERE).*?((?i)ORDER\\s+(?i)BY\\s+((\\w+\\.\\w+(\\s+?\\bDESC|ASC\\b?)?)|(\\((\\w+\\.\\w+(\\s+?\\bDESC|ASC\\b?)?(\\s*?,\\s*?)?)+\\))\\s*)+)?((?i)LIMIT\\s+\\d+\\s+)?)?");
+            Pattern.compile("(?i)\\s*(SELECT)\\s+((\\*\\s+)|(\\w+\\.((\\w+(\\s+(AS\\s+)?(\\S+|('.*?')|(\".*?\")))?)|(\\*))((\\s*,)?)\\s*)+)(FROM)\\s+" +
+                            "(\\w+(\\.\\w+){2})\\s+(AS\\s+)?\\w+\\s+" +
+                            "(\\s*(((LEFT|RIGHT|OUTER|FULL)\\s+)?(JOIN)\\s+(\\w+(\\.\\w+){2}))\\s+(AS\\s+)?\\w+\\s+" +
+                            "(ON)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+))(\\s+(AND)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+)))*)+" +
+                            "(\\s+(WHERE).*?" +
+                            "(ORDER\\s+BY(\\s*\\w+\\.\\w+\\s*(\\bDESC|ASC\\b)?(,\\s*)?)+)?" +
+                            "(LIMIT\\s+\\d+\\s+)?)?");
 
     /**
      * 获取表名的正则
@@ -85,13 +89,22 @@ public class CrossSourceSQLParser {
 
     private final static Pattern IS_INNER_CONDITION_REG = Pattern.compile(FIELD_REG + "\\s*(=|<|<=|>|>=|!=)\\s*(" + FIELD_REG + ")", Pattern.CASE_INSENSITIVE);
 
-    private final static Pattern FIND_ORDERED_CLAUSE = Pattern.compile("((?i)ORDER\\s+(?i)BY(\\s*\\w+\\.\\w+\\s*(\\bDESC|ASC\\b)?(,\\s*)?)+)", Pattern.CASE_INSENSITIVE);
+    private final static Pattern FIND_ORDERED_CLAUSE = Pattern.compile("((?i)ORDER\\s+BY(\\s*\\w+\\.\\w+\\s*(\\bDESC|ASC\\b)?(,\\s*)?)+)", Pattern.CASE_INSENSITIVE);
 
     private final static Pattern FIND_LIMIT_CLAUSE = Pattern.compile("((?i)\\bLIMIT\\s+\\d+)", Pattern.CASE_INSENSITIVE);
 
-    private final static Pattern FIND_STR_IN_PARENTHESES = Pattern.compile("(?<=\\().*(?=\\))");
 
     private final static Pattern FIND_ORDERED_FIELD_REG = Pattern.compile("\\w+\\.\\w+(\\s+DESC|ASC)?", Pattern.CASE_INSENSITIVE);
+
+    private final static Pattern FIND_SELECT_CLAUSE_REG = Pattern.compile("(?<=\\bSELECT\\b).*?(?=FROM)", Pattern.CASE_INSENSITIVE);
+
+    private final static Pattern FIELD_DESC_REG_0 = Pattern.compile("(?i)\\w+\\.\\w+\\s+(AS\\s+)?\\S+");
+    private final static Pattern FIELD_DESC_REG_1 = Pattern.compile("(?i)\\w+\\.\\w+\\s+(AS\\s+)?('.*?')");
+    private final static Pattern FIELD_DESC_REG_2 = Pattern.compile("(?i)\\w+\\.\\w+\\s+(AS\\s+)?(\".*?\")");
+
+    private final static Pattern FIND_STR_IN_SINGLE_QUOTE = Pattern.compile("(?<=').*?(?=')");
+    private final static Pattern FIND_STR_IN_DOUBLE_QUOTE = Pattern.compile("(?<=\").*?(?=\")");
+    private final static Pattern FIND_STR_IN_PARENTHESES = Pattern.compile("(?<=\\().*(?=\\))");
 
     @Getter
     private final String sql;
@@ -145,11 +158,44 @@ public class CrossSourceSQLParser {
         return joinConditions;
     }
 
-    // 解析sql
+    // 解析sql的表关系
     public LinkRelation analysisRelation() {
+        LinkRelation linkRelation = new LinkRelation();
+        Matcher selectClauseMatcher = FIND_SELECT_CLAUSE_REG.matcher(sql);
+        if (selectClauseMatcher.find()) {
+            String selectClause = selectClauseMatcher.group();
+            String[] fieldDescStrs = selectClause.split(",");
+            if (!(fieldDescStrs.length == 1 && Objects.equals(fieldDescStrs[0].trim(), "*"))) {
+                List<Pair<String, String>> outputFields = new ArrayList<>();
+                for (String fieldStr : fieldDescStrs) {
+                    fieldStr = fieldStr.trim();
+                    if(fieldStr.matches("\\w+\\.((\\w+)|\\*)")){
+                        outputFields.add(Pair.of(fieldStr, fieldStr));
+                        continue;
+                    }
+                    if(fieldStr.matches(FIELD_DESC_REG_0.pattern())){
+                        String[] splitFieldStr = fieldStr.split("(?i)\\s+(AS\\s+)?");
+                        outputFields.add(Pair.of(splitFieldStr[0].trim(), splitFieldStr[1].trim()));
+                        continue;
+                    }
+                    if(fieldStr.matches(FIELD_DESC_REG_1.pattern())){
+                        outputFields.add(Pair.of(fieldStr.split("(?i)\\s+(AS\\s+)?")[0].trim(), fieldStr.substring(fieldStr.indexOf("'") + 1, fieldStr.lastIndexOf("'"))));
+                        continue;
+                    }
+                    if(fieldStr.matches(FIELD_DESC_REG_2.pattern())){
+                        outputFields.add(Pair.of(fieldStr.split("(?i)\\s+(AS\\s+)?")[0].trim(), fieldStr.substring(fieldStr.indexOf("\"") + 1, fieldStr.lastIndexOf("\""))));
+                        continue;
+                    }
+                    throw new IllegalArgumentException("unknown filed description: " + fieldStr);
+                }
+                linkRelation.setOutputDescription(outputFields);
+            }
+            log.debug("select clause: {}", selectClause);
+        } else {
+            throw new IllegalArgumentException("not found select clause");
+        }
         Matcher findFirstTableMatcher = FIND_FIRST_TABLE_REG.matcher(sql);
         List<String> tables = new ArrayList<>(4);
-        LinkRelation linkRelation = new LinkRelation();
         Map<String, LinkRelation.TableNode> virtualNodeMap = new HashMap<>();
         // k: 表别名, v: 原表全名
         Map<String, String> tableNameRef = new HashMap<>(4);
@@ -243,14 +289,12 @@ public class CrossSourceSQLParser {
         }
         profile0.joinFields().add(Pair.of(leftFieldFullName, rightFieldFullName));
 
-        // left.next().computeIfAbsent(right.tableName(), k -> new ArrayList<>()).add(Pair.of(left.tableName() + "." + leftField, right.tableName() + "." + rightField));
         JoinProfile profile1 = right.prev().computeIfAbsent(left.tableName(), k -> new JoinProfile(joinType));
         if (!Objects.equals(profile1.joinType(), joinType)) {
             throw new IllegalArgumentException(String.format("left table '%s' an right table '%s' is '%s', but condition '%s=%s' is '%s'",
                     left.tableName(), right.tableName(), profile1.joinType(), leftFieldFullName, rightFieldFullName, joinType));
         }
         profile1.joinFields().add(Pair.of(leftFieldFullName, rightFieldFullName));
-        // right.prev().computeIfAbsent(left.tableName(), k -> new ArrayList<>()).add(Pair.of(left.tableName() + "." + leftField, right.tableName() + "." + rightField));
 
     }
 
@@ -262,24 +306,20 @@ public class CrossSourceSQLParser {
         if (matcher.find()) {
             String whereClause = matcher.group();
             log.debug("where clause: {}", whereClause);
-            queryCondition.sqlWhereClause(whereClause.replaceAll("(?i)where","").trim());
+            queryCondition.sqlWhereClause(whereClause.replaceAll("(?i)where", "").trim());
             Matcher orderedMatcher = FIND_ORDERED_CLAUSE.matcher(whereClause);
             if (orderedMatcher.find()) {
                 String orderedClause = orderedMatcher.group();
-                if(orderedClause.matches("(?i)\\bdesc\\s+$")){
-
-                }
                 log.info("order clause: {}", orderedClause);
                 Matcher orderedFieldMatcher = FIND_ORDERED_FIELD_REG.matcher(orderedClause);
                 List<Pair<String, Boolean>> orderedField = new ArrayList<>();
-                while (orderedFieldMatcher.find()){
+                while (orderedFieldMatcher.find()) {
                     String str = orderedFieldMatcher.group().trim();
-                    if(str.matches(".*(?i)desc\\s*$")){
+                    if (str.matches(".*(?i)desc\\s*$")) {
                         orderedField.add(Pair.of(str.split("\\s+")[0], false));
-                    }else
+                    } else
                         orderedField.add(Pair.of(str.split("\\s+")[0], true));
                 }
-
                 log.debug("order by: {}", orderedField);
                 queryCondition.orderedFields(orderedField);
                 whereClause = whereClause.replaceAll(FIND_ORDERED_CLAUSE.pattern(), "").trim();
@@ -301,7 +341,7 @@ public class CrossSourceSQLParser {
                     String rightPart = splitCase[1].trim();
                     ConditionItem conditionItem = new ConditionItem();
                     conditionItem.leftField(splitCase[0]);
-                    if(rightPart.matches("\\w+\\.\\w+")) {
+                    if (rightPart.matches("\\w+\\.\\w+")) {
                         conditionItem.rightFields(new String[]{splitCase[1]});
                         conditionItem.rightFields(new String[]{rightPart});
                     } else

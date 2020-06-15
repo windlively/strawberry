@@ -23,23 +23,23 @@ public class StaticTest {
                      " WHERE t1.f2 = 'xxx' AND t1.f2 > 'xxx' AND t3.f1 IN ('xxx', 'xxx') AND t1.f3 BETWEEN 'xxx' AND 'xxx';";
         CrossSourceSQLParser sqlParser = new CrossSourceSQLParser(sql);
         System.out.println(sqlParser.getTables());
-        System.out.println(sqlParser.getJoinCondition());
     }
 
     @Test
     public void sqlAnalysisTest(){
-        String sql = " SELECT * FROM s1.d1.t1 AS t1\n" +
+        String sql = " SELECT t1.t2 as fff223, t2.t4 fff1 , t3.* FROM s1.d1.t1 AS t1\n" +
                      " left JOIN s1.d2.t2 t2 ON t1.f1 = t2.f1 AND t1.f3 = t2.f4\n and t1.f2 = t2.f3" +
                      " right join s2.d2.t3 AS t3 ON  t2.f2 = t3.f3 AND t2.f1 = t3.f1 and t3.f5=t1.f1\n" +
                      " WHERE t1.f2 = 'xxx' AND t1.f2 > 'xxx' AND t3.f1 IN ('xxx', 'xxx') AND t1.f3 BETWEEN 'xxx' AND 'xxx' AND t2.f3 LIKE '%s' AND t2.f1 between '-1' and '000' and t1.f1 = t2.f3 " +
-                     " order bY (t2.f5, t3.f6) limit 12;";
+                     " order bY t2.f5, t3.f6 desc limit 12;";
         StopWatch stopWatch = new StopWatch("sql analysis");
         stopWatch.start();
         CrossSourceSQLParser sqlParser = new CrossSourceSQLParser(sql);
         LinkRelation relation = sqlParser.analysisRelation();
+        sqlParser.analysisWhereCondition();
         stopWatch.stop();
         log.info(stopWatch.prettyPrint());
-        log.info(toJSONString(relation));
+        log.info(relation.toString());
     }
 
 

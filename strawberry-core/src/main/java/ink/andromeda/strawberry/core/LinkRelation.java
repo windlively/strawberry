@@ -1,5 +1,7 @@
 package ink.andromeda.strawberry.core;
 
+import com.sun.xml.internal.bind.v2.runtime.reflect.Lister;
+import ink.andromeda.strawberry.tools.Pair;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
@@ -32,6 +34,18 @@ public class LinkRelation {
     @Setter
     @Getter
     private Map<String, String> tableLabelRef;
+
+    @Setter
+    @Getter
+    private List<Pair<String, String>> outputDescription;
+
+    @Getter
+    @Setter
+    private List<String> outputFields;
+
+    @Getter
+    @Setter
+    private List<String> outputFieldLabels;
 
     @Getter
     @Accessors(fluent = true)
