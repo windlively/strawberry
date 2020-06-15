@@ -106,6 +106,8 @@ public class CrossSourceSQLParser {
     private final static Pattern FIND_STR_IN_DOUBLE_QUOTE = Pattern.compile("(?<=\").*?(?=\")");
     private final static Pattern FIND_STR_IN_PARENTHESES = Pattern.compile("(?<=\\().*(?=\\))");
 
+    private final static Pattern FIND_OPERATOR_REG = Pattern.compile("(=|<|<=|>|>=|!=)");
+
     @Getter
     private final String sql;
 
@@ -340,6 +342,12 @@ public class CrossSourceSQLParser {
                     String[] splitCase = whereCase.split("(=|<|<=|>|>=|!=)");
                     String rightPart = splitCase[1].trim();
                     ConditionItem conditionItem = new ConditionItem();
+                    Matcher operatorMatcher = FIND_OPERATOR_REG.matcher(whereCase);
+                    if(operatorMatcher.find()){
+                        conditionItem.operator(Operator.of(operatorMatcher.group().trim()));
+                    }else {
+                        throw new IllegalArgumentException("not found operator in: " + whereCase);
+                    }
                     conditionItem.leftField(splitCase[0]);
                     if (rightPart.matches("\\w+\\.\\w+")) {
                         conditionItem.rightFields(new String[]{splitCase[1]});

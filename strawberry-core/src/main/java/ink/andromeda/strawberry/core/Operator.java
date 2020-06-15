@@ -102,7 +102,10 @@ public enum Operator {
     }
 
     public static final Comparator<Object> objectComparator = (o1, o2) -> {
-
+        if(o1 == null)
+            o1 = 0;
+        if(o2 == null)
+            o2 = 0;
         if(o1 instanceof Number){
             BigDecimal leftVal = new BigDecimal(o1.toString());
             BigDecimal rightVal;

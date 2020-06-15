@@ -35,7 +35,7 @@ public class ContextServiceTest {
     @Test
     public void joinQueryTest() throws Exception {
 
-        String sql = "SELECT co.id, co.channel_order_no, zurp.id, zurp.period, zurp.channel_order_no, mcc.id, mcc.sequence_number FROM master.core_system.core_order co " +
+        String sql = "SELECT co.id, co.channel_order_no, co.period, zurp.id, zurp.period, zurp.channel_order_no, mcc.id, mcc.sequence_number FROM master.core_system.core_order co " +
                      " JOIN capital.capital.zfpt_user_repayment_plan zurp ON co.channel_order_no=zurp.channel_order_no" +
                      " JOIN mobile_card.mobile_card.mcc_customer_consume mcc ON mcc.sequence_number = co.channel_order_no  " +
                      "WHERE mcc.repayment_status = 2 AND co.channel_order_no IN ('LOAN360API2019011630081596979',\n" +
@@ -203,7 +203,7 @@ public class ContextServiceTest {
                      "'SDN2019011617344845903',\n" +
                      "'SDN2019011619958291719',\n" +
                      "'ZZD_SD2019011628030896495',\n" +
-                     "'ZZD_SD2019011620045468649') order by co.id, zurp.period desc limit 10";
+                     "'ZZD_SD2019011620045468649') and co.period=zurp.period order by co.id, zurp.period desc";
         CrossSourceQueryEngine crossSourceQueryEngine =
                 new CrossSourceQueryEngine(s -> metaInfoDao.getTableMetaInfo(s), s -> dynamicDataSource.getDataSource(s));
 

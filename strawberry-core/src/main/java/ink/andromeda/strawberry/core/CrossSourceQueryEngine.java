@@ -405,12 +405,12 @@ public class CrossSourceQueryEngine {
 
             if (maxResultLength > 0 && result.size() > maxResultLength) {
                 log.warn("the result size is out of limit size {}, ignore the following data!", maxResultLength);
-                finishQuery(result, condition);
+                result = finishQuery(result, condition);
                 break;
             }
 
             if (limit > 0 && result.size() >= limit || dataCount < baseQueryCount) {
-                finishQuery(result, condition);
+                result = finishQuery(result, condition);
                 if (limit > 0 && result.size() > limit)
                     result = result.subList(0, limit);
                 break;
@@ -419,7 +419,7 @@ public class CrossSourceQueryEngine {
         return result;
     }
 
-    private void finishQuery(List<Map<String, Object>> result, QueryCondition queryCondition){
+    private List<Map<String, Object>> finishQuery(List<Map<String, Object>> result, QueryCondition queryCondition){
         List<ConditionItem> conditionItems = queryCondition.crossSourceCondition();
         // 内部条件筛选
         if (conditionItems != null && conditionItems.size() > 0) {
@@ -437,6 +437,7 @@ public class CrossSourceQueryEngine {
                 return 0;
             });
         }
+        return result;
     }
 
     /**
