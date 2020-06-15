@@ -29,7 +29,6 @@ public class GeneralTools {
         return gson.get();
     }
 
-    // Spring的类型转换服务
     private final static ThreadLocal<DefaultConversionService> conversionService = ThreadLocal.withInitial(() -> {
         DefaultConversionService defaultConversionService = new DefaultConversionService();
         // String -> Date 转换器
@@ -37,6 +36,7 @@ public class GeneralTools {
         return defaultConversionService;
     });
 
+    // Spring的类型转换服务
     public static DefaultConversionService conversionService() {
         return conversionService.get();
     }
@@ -114,6 +114,12 @@ public class GeneralTools {
         });
     }
 
+    /**
+     * 测试数据源是否可可连接
+     *
+     * @param dataSource 数据源
+     * @throws SQLException 当连接失败的时候
+     */
     public static void testDataSourceConnection(DataSource dataSource) throws SQLException {
         try (
                 Connection connection = dataSource.getConnection();
@@ -123,17 +129,21 @@ public class GeneralTools {
         }
     }
 
-    public static String subStringAt(String str, char startChar){
+    /**
+     * 获取某个字符之后的字符串
+     *
+     * @param str       原始字符串
+     * @param startChar 开始分割的字符
+     */
+    public static String subStringAt(String str, char startChar) {
         return str.substring(str.indexOf(startChar) + 1);
     }
 
-    public static String trim(String input, char start, char end){
-        int startIndex = input.indexOf(start);
-        int endIndex = input.lastIndexOf(end);
-        return input.substring(startIndex, endIndex);
-    }
-
-    // 数据库类型对应的Java类型
+    /**
+     * 数据库类型对应的Java类型
+     *
+     * @param columnType jdbc的数据类型
+     */
     public static Class<?> jdbcTypeToJavaType(String columnType) {
         switch (columnType) {
             case "varchar":
@@ -175,7 +185,6 @@ public class GeneralTools {
                 Connection connection = dataSource.getConnection();
                 PreparedStatement preparedStatement = connection.prepareStatement(sql);
                 ResultSet resultSet = preparedStatement.executeQuery();
-
         ) {
             List<Map<String, Object>> result = new ArrayList<>(16);
             ResultSetMetaData metaData = resultSet.getMetaData();
@@ -189,7 +198,6 @@ public class GeneralTools {
             }
             return result;
         } catch (SQLException ex) {
-            // 在此处将异常处理掉, 否咋放在上层处理当发生异常时会导致connection未关闭, 一直处于挂起状态
             throw new IllegalStateException(String.format("exception in execute sql '%s', message: %s", sql, ex.toString()), ex);
         }
     }
@@ -240,12 +248,12 @@ public class GeneralTools {
                         ("set" + (autoTypeAliases ? upCaseToCamelCase(originalName, true)
                                 : originalName.charAt(0) - 32 + originalName.substring(1)));
                 Method method;
-                if(fluentSetterMode){
+                if (fluentSetterMode) {
                     method = Stream.of(getAllDeclaredMethods(clazz))
                             .filter(s -> s.getName().equals(setterMethodName) && s.getParameterCount() == 1)
                             .findFirst()
                             .orElse(null);
-                }else {
+                } else {
                     method = findMethod(clazz, setterMethodName, null);
                 }
                 if (method == null) {
@@ -274,6 +282,12 @@ public class GeneralTools {
         }
     }
 
+    /**
+     * 将Java对象转换为在sql字符串中的形式
+     *
+     * @param object java对象
+     * @return sql字符串值
+     */
     public static String javaObjectToSQLStringValue(Object object) {
         if (object == null)
             return "null";
@@ -284,11 +298,6 @@ public class GeneralTools {
         if (object instanceof Date)
             return "'" + new DateTime(object).toString("yyyy-MM-dd HH:mm:ss.SSS") + "'";
         return object.toString();
-    }
-
-
-    public static void main(String[] args) {
-
     }
 
     public static DataSource buildDataSource(String dbName, String address, int port, String userName, String password) throws SQLException {

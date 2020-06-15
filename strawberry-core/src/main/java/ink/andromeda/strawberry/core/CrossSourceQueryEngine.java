@@ -23,6 +23,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static ink.andromeda.strawberry.context.StrawberryService.SIMPLE_TASK_POOL_EXECUTOR;
+import static ink.andromeda.strawberry.core.CrossSourceSQLParser.*;
 import static ink.andromeda.strawberry.tools.GeneralTools.*;
 
 /**
@@ -53,7 +54,6 @@ public class CrossSourceQueryEngine {
     private static final int DEFAULT_MAX_RESULT_LENGTH = 20000;
 
     public final static String $_LINE_NUMBER_STR = "$LINE_NUMBER";
-
 
     // 执行join操作时的标识符
 
@@ -93,14 +93,22 @@ public class CrossSourceQueryEngine {
     private final Function<String, DataSource> obtainDataSourceFunction;
 
     public QueryResults executeQuery(String sql) throws Exception {
-
-        CrossSourceSQLParser crossSourceSQLParser = new CrossSourceSQLParser(sql);
-
-        log.debug("start query: {}", crossSourceSQLParser.getSql());
+        sql = checkSQL(sql);
+        log.debug("start query: {}", sql);
         StopWatch stopWatch = new StopWatch();
         stopWatch.start("parser sql");
-        LinkRelation linkRelation = crossSourceSQLParser.analysisRelation();
-        QueryCondition queryCondition = crossSourceSQLParser.analysisWhereCondition();
+        LinkRelation linkRelation = analysisRelation(sql);
+        QueryCondition queryCondition ;
+        try {
+             queryCondition = analysisConditionFromSQL(sql);
+        }catch (Exception ex){
+            log.warn(ex.getMessage());
+            queryCondition = new QueryCondition();
+            analysisOrderedAndLimit(sql, queryCondition);
+            queryCondition.conditions(Collections.emptyMap());
+        }
+
+
         stopWatch.stop();
         stopWatch.start("execute");
         QueryResults results = executeQuery(linkRelation, queryCondition);
@@ -158,7 +166,11 @@ public class CrossSourceQueryEngine {
                     if (fName.endsWith(".*")) {
                         String tableLabelName = fName.substring(0, fName.indexOf('.'));
                         String fullName = Objects.requireNonNull(tableLabelRef.get(tableLabelName));
-                        List<String> list = obtainTableMetaInfoFunction.apply(fullName).fieldList();
+                        List<String> list = obtainTableMetaInfoFunction.apply(fullName)
+                                .fieldList()
+                                .stream()
+                                .map(s -> tableLabelName + "." + s)
+                                .collect(Collectors.toList());
                         outputFields.addAll(list);
                         outputFieldLabels.addAll(list);
                         return;
@@ -175,7 +187,7 @@ public class CrossSourceQueryEngine {
                 linkRelation.setOutputFieldLabels(fList);
             }
         }
-        QueryResults resultSet = new QueryResults(linkRelation.getSql() + " " + queryCondition.sqlWhereClause(), result, linkRelation.getOutputFields().toArray(new String[0]), linkRelation.getOutputFieldLabels().toArray(new String[0]));
+        QueryResults resultSet = new QueryResults(linkRelation.getSql() + " WHERE " + queryCondition.sqlWhereClause(), result, linkRelation.getOutputFields().toArray(new String[0]), linkRelation.getOutputFieldLabels().toArray(new String[0]));
         log.debug("data size: {}", result.size());
         return resultSet;
     }
@@ -357,10 +369,13 @@ public class CrossSourceQueryEngine {
         String tableName = splitTableFullName[2];
 
         DataSource dataSource = getNonNullDataSource(source);
-        StringBuilder SQL = new StringBuilder("SELECT * FROM ").append(schema).append(".").append(tableName).append(" WHERE ");
-        List<String> wheres = Objects.requireNonNull(condition.conditions().get(startTableLabelName));
-        String conditions = toSQLCondition(startTableLabelName, tableName, wheres);
-        SQL.append(conditions);
+        StringBuilder SQL = new StringBuilder("SELECT * FROM ").append(schema).append(".").append(tableName);
+        if(condition.conditions() != null && condition.conditions().get(startTableLabelName) != null) {
+            SQL.append(" WHERE ");
+            List<String> wheres = Objects.requireNonNull(condition.conditions().get(startTableLabelName));
+            String conditions = toSQLCondition(startTableLabelName, tableName, wheres);
+            SQL.append(conditions);
+        }
         LinkRelation.TableNode node = relation.getVirtualNodeMap().get(startTableLabelName);
 
 
@@ -604,7 +619,6 @@ public class CrossSourceQueryEngine {
                 .toArray(String[][]::new);
     }
 
-    @SuppressWarnings("unchecked")
     private static void buildIndex(String[][] compositeIndex,
                                    Map<String, Map<IndexKey, List<Map<String, Object>>>> compositeIndexMap,
                                    Map<String, Object> object) {
@@ -625,6 +639,9 @@ public class CrossSourceQueryEngine {
      * @throws IllegalStateException 无法找到驱动表
      */
     private String analysisDrivingTable(LinkRelation relation, QueryCondition condition) {
+        if(condition.conditions() == null || condition.conditions().isEmpty()){
+            return relation.getTables().get(0);
+        }
         Map<String, List<String>> conditionMap = condition.conditions();
         // 如果只有一个表有查询条件, 直接返回该表名
         if (conditionMap.size() == 1)

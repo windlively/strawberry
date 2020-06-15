@@ -10,7 +10,6 @@ import java.io.IOException;
 import java.util.*;
 
 import static ink.andromeda.strawberry.core.CrossSourceQueryEngine.$_LINE_NUMBER_STR;
-import static ink.andromeda.strawberry.tools.GeneralTools.toJSONString;
 
 @Slf4j
 public class StaticTest {
@@ -36,7 +35,7 @@ public class StaticTest {
         stopWatch.start();
         CrossSourceSQLParser sqlParser = new CrossSourceSQLParser(sql);
         LinkRelation relation = sqlParser.analysisRelation();
-        sqlParser.analysisWhereCondition();
+        sqlParser.analysisConditionFromSQL();
         stopWatch.stop();
         log.info(stopWatch.prettyPrint());
         log.info(relation.toString());

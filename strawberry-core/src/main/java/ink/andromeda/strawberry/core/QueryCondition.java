@@ -11,6 +11,9 @@ import java.util.Map;
 @Accessors(fluent = true)
 public class QueryCondition {
 
+    /**
+     * 查询条件
+     */
     @Getter
     @Setter
     private String sqlWhereClause;

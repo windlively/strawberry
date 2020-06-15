@@ -17,11 +17,11 @@ import java.util.stream.Stream;
 public class CrossSourceSQLParser {
 
     /**
-     * 校验SQL格式的正则, 所给的SQL语句必须为如下格式:
+     * 校验SQL格式的正则, 格式:
      * <p>SELECT * FROM s1.d1.t1 AS t1
      * JOIN s1.d2.t2 t2 ON t1.f1 = t2.f1 AND t1.f3 = t2.f4
      * JOIN s2.d2.t3 AS t3 ON t2.f2 = t3.f3 AND t2.f1 = t3.f1
-     * WHERE t1.f2 = 'xxx' AND t1.f2 > 'xxx' AND t3.f1 IN ('xxx', 'xxx') AND t1.f3 BETWEEN 'xxx' AND 'xxx';
+     * WHERE t1.f2 = 'xxx' AND t1.f2 > 'xxx' AND t3.f1 IN ('xxx', 'xxx') AND t1.f3 BETWEEN 'xxx' AND 'xxx' order by t1.f4 limit 12;
      * (PS, sn: 数据源名称, dn: 数据库名称, tn: 表名, fn: 字段名)
      */
     private final static Pattern SQL_FORMAT_REG =
@@ -29,9 +29,10 @@ public class CrossSourceSQLParser {
                             "(\\w+(\\.\\w+){2})\\s+(AS\\s+)?\\w+\\s+" +
                             "(\\s*(((LEFT|RIGHT|OUTER|FULL)\\s+)?(JOIN)\\s+(\\w+(\\.\\w+){2}))\\s+(AS\\s+)?\\w+\\s+" +
                             "(ON)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+))(\\s+(AND)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+)))*)+" +
-                            "(\\s+(WHERE).*?" +
+                            "((\\s+(ORDER\\s+BY(\\s*\\w+\\.\\w+\\s*(\\bDESC|ASC\\b)?(,\\s*)?)+)?" +
+                            "(\\s*LIMIT\\s+\\d+\\s*)?)|(\\s+(WHERE).*?" +
                             "(ORDER\\s+BY(\\s*\\w+\\.\\w+\\s*(\\bDESC|ASC\\b)?(,\\s*)?)+)?" +
-                            "(LIMIT\\s+\\d+\\s+)?)?");
+                            "(LIMIT\\s+\\d+\\s*)?)|(\\s*))?");
 
     /**
      * 获取表名的正则
@@ -68,12 +69,14 @@ public class CrossSourceSQLParser {
      */
     private final static Pattern FIND_JOIN_CLAUSE_REG =
             Pattern.compile("((((\\b(LEFT)|(RIGHT)|(OUTER)|(FULL)\\b)\\s+?)?(\\bJOIN\\b)\\s+(\\w+(\\.\\w+){2}))\\s+((?i)AS\\s+)?\\w+\\s+" +
-                            "((?i)ON)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+))(\\s+((?i)AND)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+)))*)\\s+(?=((\\bLEFT|RIGHT|OUTER|FULL\\b)\\s+)?JOIN|WHERE\\s+)", Pattern.CASE_INSENSITIVE);
+                            "((?i)ON)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+))(\\s+((?i)AND)\\s+((\\w+\\.\\w+)\\s*=\\s*(\\w+\\.\\w+)))*)\\s*", Pattern.CASE_INSENSITIVE);
 
     /**
      * 截取SQL的WHERE子句
      */
-    private final static Pattern FIND_WHERE_CLAUSE_REG = Pattern.compile("\\bWHERE\\b[\\s\\S]*", Pattern.CASE_INSENSITIVE);
+    private final static Pattern FIND_WHERE_CLAUSE_REG = Pattern.compile("(?<=\\bWHERE\\b)[\\s\\S]*", Pattern.CASE_INSENSITIVE);
+
+    private final static Pattern FIND_TABLE_RELATION_CLAUSE_REG = Pattern.compile("(?i)\\s*\\bSELECT\\b[\\s\\S]+?\\bFROM\\b[\\s\\S]+?(?=(\\bWHERE\\b|$))");
 
     /**
      * 获取每一条条件语句
@@ -85,43 +88,89 @@ public class CrossSourceSQLParser {
      */
     private final static Pattern FIND_JOIN_TYPE_REG = Pattern.compile("(?i)((\\bLEFT|RIGHT|OUTER|FULL\\b)\\s+)?\\bJOIN\\b", Pattern.CASE_INSENSITIVE);
 
+    /**
+     * sql字段(表别名+字段名): {tableLabelName}.{fieldName}
+     */
     private final static String FIELD_REG = "\\b\\w+\\.\\w+\\b";
 
+    /**
+     * 是否为跨源的查询条件
+     */
     private final static Pattern IS_INNER_CONDITION_REG = Pattern.compile(FIELD_REG + "\\s*(=|<|<=|>|>=|!=)\\s*(" + FIELD_REG + ")", Pattern.CASE_INSENSITIVE);
 
+    /**
+     * 获取order by子句
+     */
     private final static Pattern FIND_ORDERED_CLAUSE = Pattern.compile("((?i)ORDER\\s+BY(\\s*\\w+\\.\\w+\\s*(\\bDESC|ASC\\b)?(,\\s*)?)+)", Pattern.CASE_INSENSITIVE);
 
-    private final static Pattern FIND_LIMIT_CLAUSE = Pattern.compile("((?i)\\bLIMIT\\s+\\d+)", Pattern.CASE_INSENSITIVE);
+    /**
+     * 获取limit子句
+     */
+    private final static Pattern FIND_LIMIT_CLAUSE = Pattern.compile("((?i)\\bLIMIT\\s+\\d+)\\s*;?$", Pattern.CASE_INSENSITIVE);
 
-
+    /**
+     * 获取order by子句的排序字段
+     */
     private final static Pattern FIND_ORDERED_FIELD_REG = Pattern.compile("\\w+\\.\\w+(\\s+DESC|ASC)?", Pattern.CASE_INSENSITIVE);
 
+    /**
+     * 获取查询字段子句
+     */
     private final static Pattern FIND_SELECT_CLAUSE_REG = Pattern.compile("(?<=\\bSELECT\\b).*?(?=FROM)", Pattern.CASE_INSENSITIVE);
 
+    /**
+     * 获取查询字段的字符串描述: [t.f as a], [t.f a]
+     */
     private final static Pattern FIELD_DESC_REG_0 = Pattern.compile("(?i)\\w+\\.\\w+\\s+(AS\\s+)?\\S+");
+
+    /**
+     * 获取查询字段的字符串描述: [t.f as 'a'], [t.f 'a']
+     */
     private final static Pattern FIELD_DESC_REG_1 = Pattern.compile("(?i)\\w+\\.\\w+\\s+(AS\\s+)?('.*?')");
+
+    /**
+     * 获取查询字段的字符串描述: [t.f as "a"], [t.f "a"]
+     */
     private final static Pattern FIELD_DESC_REG_2 = Pattern.compile("(?i)\\w+\\.\\w+\\s+(AS\\s+)?(\".*?\")");
 
+    /**
+     * 获取单引号(不包含符号本身)内部的内容, 非贪婪模式
+     */
     private final static Pattern FIND_STR_IN_SINGLE_QUOTE = Pattern.compile("(?<=').*?(?=')");
-    private final static Pattern FIND_STR_IN_DOUBLE_QUOTE = Pattern.compile("(?<=\").*?(?=\")");
-    private final static Pattern FIND_STR_IN_PARENTHESES = Pattern.compile("(?<=\\().*(?=\\))");
 
+    /**
+     * 获取双引号(不包含符号本身)的内容, 非贪婪模式
+     */
+    private final static Pattern FIND_STR_IN_DOUBLE_QUOTE = Pattern.compile("(?<=\").*?(?=\")");
+
+    /**
+     * 获取圆括号(不包含符号本身)的内容, 非贪婪模式
+     */
+    private final static Pattern FIND_STR_IN_PARENTHESES = Pattern.compile("(?<=\\().*?(?=\\))");
+
+    /**
+     * 获取操作符
+     */
     private final static Pattern FIND_OPERATOR_REG = Pattern.compile("(=|<|<=|>|>=|!=)");
+
+    private List<String> tables;
 
     @Getter
     private final String sql;
 
-    private List<String> tables;
-
     public CrossSourceSQLParser(String sql) {
+        this.sql = checkSQL(sql);
+    }
+
+    public static String checkSQL(String sql) {
         Objects.requireNonNull(sql);
         sql = sql.replaceAll("[\\t\\n\\r\\f]", " ").trim();
         if (sql.charAt(sql.length() - 1) == ';')
             sql = sql.substring(0, sql.length() - 1);
-        this.sql = sql;
-        if (!this.sql.matches(SQL_FORMAT_REG.pattern())) {
-            throw new IllegalArgumentException("wrong sql format: " + this.sql);
+        if (!sql.matches(SQL_FORMAT_REG.pattern())) {
+            throw new IllegalArgumentException("wrong sql format: " + sql);
         }
+        return sql;
     }
 
     /**
@@ -160,9 +209,17 @@ public class CrossSourceSQLParser {
         return joinConditions;
     }
 
-    // 解析sql的表关系
     public LinkRelation analysisRelation() {
+        return analysisRelation(this.sql);
+    }
+
+    /**
+     * 解析sql的表关系
+     *
+     */
+    public static LinkRelation analysisRelation(String sql) {
         LinkRelation linkRelation = new LinkRelation();
+        linkRelation.setSql(sql.split("(?i)\\bWHERE\\b")[0].trim());
         Matcher selectClauseMatcher = FIND_SELECT_CLAUSE_REG.matcher(sql);
         if (selectClauseMatcher.find()) {
             String selectClause = selectClauseMatcher.group();
@@ -171,20 +228,20 @@ public class CrossSourceSQLParser {
                 List<Pair<String, String>> outputFields = new ArrayList<>();
                 for (String fieldStr : fieldDescStrs) {
                     fieldStr = fieldStr.trim();
-                    if(fieldStr.matches("\\w+\\.((\\w+)|\\*)")){
+                    if (fieldStr.matches("\\w+\\.((\\w+)|\\*)")) {
                         outputFields.add(Pair.of(fieldStr, fieldStr));
                         continue;
                     }
-                    if(fieldStr.matches(FIELD_DESC_REG_0.pattern())){
+                    if (fieldStr.matches(FIELD_DESC_REG_0.pattern())) {
                         String[] splitFieldStr = fieldStr.split("(?i)\\s+(AS\\s+)?");
                         outputFields.add(Pair.of(splitFieldStr[0].trim(), splitFieldStr[1].trim()));
                         continue;
                     }
-                    if(fieldStr.matches(FIELD_DESC_REG_1.pattern())){
+                    if (fieldStr.matches(FIELD_DESC_REG_1.pattern())) {
                         outputFields.add(Pair.of(fieldStr.split("(?i)\\s+(AS\\s+)?")[0].trim(), fieldStr.substring(fieldStr.indexOf("'") + 1, fieldStr.lastIndexOf("'"))));
                         continue;
                     }
-                    if(fieldStr.matches(FIELD_DESC_REG_2.pattern())){
+                    if (fieldStr.matches(FIELD_DESC_REG_2.pattern())) {
                         outputFields.add(Pair.of(fieldStr.split("(?i)\\s+(AS\\s+)?")[0].trim(), fieldStr.substring(fieldStr.indexOf("\"") + 1, fieldStr.lastIndexOf("\""))));
                         continue;
                     }
@@ -274,13 +331,13 @@ public class CrossSourceSQLParser {
         return linkRelation;
     }
 
-    private String[] splitSQLTable(String str) {
+    private static String[] splitSQLTable(String str) {
         return Stream.of(str.trim().split("\\s+((?i)AS\\s+)?"))
                 .map(String::trim)
                 .toArray(String[]::new);
     }
 
-    private void addJoinField(LinkRelation.TableNode left, LinkRelation.TableNode right, String leftField, String rightField, JoinType joinType) {
+    private static void addJoinField(LinkRelation.TableNode left, LinkRelation.TableNode right, String leftField, String rightField, JoinType joinType) {
         JoinProfile profile0 = left.next().computeIfAbsent(right.tableName(), k -> new JoinProfile(joinType));
         String leftFieldFullName = left.tableName() + "." + leftField;
         String rightFieldFullName = right.tableName() + "." + rightField;
@@ -300,73 +357,111 @@ public class CrossSourceSQLParser {
 
     }
 
-    public QueryCondition analysisWhereCondition() {
-        Matcher matcher = FIND_WHERE_CLAUSE_REG.matcher(sql);
+    public QueryCondition analysisConditionFromSQL() {
+        return analysisConditionFromSQL(this.sql);
+    }
+
+    /**
+     * 从where子句(不带'where'字符串前缀)中解析查询条件
+     *
+     * @param whereClause t1.f2 = 'str' AND t2.f5 <= 0 ...
+     * @return {@link QueryCondition}
+     */
+    public static QueryCondition analysisConditionFromWhereClause(String whereClause) {
         QueryCondition queryCondition = new QueryCondition();
         Map<String, List<String>> cases = new HashMap<>();
-        List<ConditionItem> innerCase = new ArrayList<>();
-        if (matcher.find()) {
-            String whereClause = matcher.group();
-            log.debug("where clause: {}", whereClause);
-            queryCondition.sqlWhereClause(whereClause.replaceAll("(?i)where", "").trim());
-            Matcher orderedMatcher = FIND_ORDERED_CLAUSE.matcher(whereClause);
-            if (orderedMatcher.find()) {
-                String orderedClause = orderedMatcher.group();
-                log.info("order clause: {}", orderedClause);
-                Matcher orderedFieldMatcher = FIND_ORDERED_FIELD_REG.matcher(orderedClause);
-                List<Pair<String, Boolean>> orderedField = new ArrayList<>();
-                while (orderedFieldMatcher.find()) {
-                    String str = orderedFieldMatcher.group().trim();
-                    if (str.matches(".*(?i)desc\\s*$")) {
-                        orderedField.add(Pair.of(str.split("\\s+")[0], false));
-                    } else
-                        orderedField.add(Pair.of(str.split("\\s+")[0], true));
-                }
-                log.debug("order by: {}", orderedField);
-                queryCondition.orderedFields(orderedField);
-                whereClause = whereClause.replaceAll(FIND_ORDERED_CLAUSE.pattern(), "").trim();
-            }
-            Matcher limitMatcher = FIND_LIMIT_CLAUSE.matcher(whereClause);
-            if (limitMatcher.find()) {
-                String limitCount = limitMatcher.group().replaceAll("(?i)limit\\s+?", "").trim();
-                log.debug("limit: {}", limitCount);
-                queryCondition.limit(Integer.parseInt(limitCount));
-                whereClause = whereClause.replaceAll(FIND_LIMIT_CLAUSE.pattern(), "").trim();
-            }
-            Matcher caseMatcher = FIND_WHERE_CASE_REG.matcher(whereClause);
-            while (caseMatcher.find()) {
-                String whereCase = caseMatcher.group().trim();
-                String tableName = whereCase.substring(0, whereCase.indexOf('.'));
-                log.debug("where case: {}", whereCase);
-                if (whereCase.matches(IS_INNER_CONDITION_REG.pattern())) {
-                    String[] splitCase = whereCase.split("(=|<|<=|>|>=|!=)");
-                    String rightPart = splitCase[1].trim();
-                    ConditionItem conditionItem = new ConditionItem();
-                    Matcher operatorMatcher = FIND_OPERATOR_REG.matcher(whereCase);
-                    if(operatorMatcher.find()){
-                        conditionItem.operator(Operator.of(operatorMatcher.group().trim()));
-                    }else {
-                        throw new IllegalArgumentException("not found operator in: " + whereCase);
-                    }
-                    conditionItem.leftField(splitCase[0]);
-                    if (rightPart.matches("\\w+\\.\\w+")) {
-                        conditionItem.rightFields(new String[]{splitCase[1]});
-                        conditionItem.rightFields(new String[]{rightPart});
-                    } else
-                        throw new IllegalArgumentException("not support: " + whereCase);
+        List<ConditionItem> crossSourceCondition = new ArrayList<>();
+        whereClause = whereClause.trim();
+        log.debug("where clause: {}", whereClause);
+        queryCondition.sqlWhereClause(whereClause);
+        whereClause = "WHERE " + whereClause;
 
-                    innerCase.add(conditionItem);
+        whereClause = analysisOrderedAndLimit(whereClause, queryCondition);
+
+        // 解析查询条件
+        Matcher caseMatcher = FIND_WHERE_CASE_REG.matcher(whereClause);
+        while (caseMatcher.find()) {
+            String whereCase = caseMatcher.group().trim();
+            String tableName = whereCase.substring(0, whereCase.indexOf('.'));
+            log.debug("where case: {}", whereCase);
+
+            // 跨数据源的查询条件(此时无法利用mysql, 需单独处理)
+            if (whereCase.matches(IS_INNER_CONDITION_REG.pattern())) {
+                String[] splitCase = whereCase.split("(=|<|<=|>|>=|!=)");
+                String rightPart = splitCase[1].trim();
+                ConditionItem conditionItem = new ConditionItem();
+                Matcher operatorMatcher = FIND_OPERATOR_REG.matcher(whereCase);
+
+                // 操作符
+                if (operatorMatcher.find()) {
+                    conditionItem.operator(Operator.of(operatorMatcher.group().trim()));
                 } else {
-                    cases.computeIfAbsent(tableName, k -> new ArrayList<>()).add(whereCase);
+                    throw new IllegalArgumentException("not found operator in: " + whereCase);
                 }
+
+                // 左侧字段
+                conditionItem.leftField(splitCase[0]);
+
+                // 右侧字段
+                if (rightPart.matches("\\w+\\.\\w+")) {
+                    conditionItem.rightFields(new String[]{splitCase[1]});
+                    conditionItem.rightFields(new String[]{rightPart});
+                } else
+                    throw new IllegalArgumentException("not support: " + whereCase);
+
+                crossSourceCondition.add(conditionItem);
+            } else {
+                // 普通的查询条件, 直接取出来, 后续交由MySQL处理
+                cases.computeIfAbsent(tableName, k -> new ArrayList<>()).add(whereCase);
             }
-        } else {
-            throw new IllegalArgumentException("not found where clause");
         }
         log.debug(cases.toString());
         queryCondition.conditions(cases);
-        queryCondition.crossSourceCondition(innerCase);
+        queryCondition.crossSourceCondition(crossSourceCondition);
         return queryCondition;
     }
 
+    /**
+     * 从完整的sql语句中解析查询条件
+     *
+     * @see #analysisConditionFromWhereClause(String)
+     */
+    public static QueryCondition analysisConditionFromSQL(String sql) {
+        Matcher matcher = FIND_WHERE_CLAUSE_REG.matcher(sql);
+        if (matcher.find()) {
+            return analysisConditionFromWhereClause(matcher.group());
+        }
+        throw new IllegalArgumentException("not found where clause");
+    }
+
+    public static String analysisOrderedAndLimit(String clause, QueryCondition queryCondition){
+        // 解析order by子句
+        Matcher orderedMatcher = FIND_ORDERED_CLAUSE.matcher(clause);
+        if (orderedMatcher.find()) {
+            String orderedClause = orderedMatcher.group();
+            log.info("order clause: {}", orderedClause);
+            Matcher orderedFieldMatcher = FIND_ORDERED_FIELD_REG.matcher(orderedClause);
+            List<Pair<String, Boolean>> orderedField = new ArrayList<>();
+            while (orderedFieldMatcher.find()) {
+                String str = orderedFieldMatcher.group().trim();
+                if (str.matches(".*(?i)desc\\s*$")) {
+                    orderedField.add(Pair.of(str.split("\\s+")[0], false));
+                } else
+                    orderedField.add(Pair.of(str.split("\\s+")[0], true));
+            }
+            log.debug("order by: {}", orderedField);
+            queryCondition.orderedFields(orderedField);
+            clause = clause.replaceAll(FIND_ORDERED_CLAUSE.pattern(), "").trim();
+        }
+
+        // 解析limit子句
+        Matcher limitMatcher = FIND_LIMIT_CLAUSE.matcher(clause);
+        if (limitMatcher.find()) {
+            String limitCount = limitMatcher.group().replaceAll("(?i)limit\\s+?", "").trim();
+            log.debug("limit: {}", limitCount);
+            queryCondition.limit(Integer.parseInt(limitCount));
+            clause = clause.replaceAll(FIND_LIMIT_CLAUSE.pattern(), "").trim();
+        }
+        return clause;
+    }
 }
