@@ -215,7 +215,6 @@ public class CrossSourceSQLParser {
 
     /**
      * 解析sql的表关系
-     *
      */
     public static LinkRelation analysisRelation(String sql) {
         LinkRelation linkRelation = new LinkRelation();
@@ -430,7 +429,7 @@ public class CrossSourceSQLParser {
         Matcher matcher = FIND_WHERE_CLAUSE_REG.matcher(sql);
         if (matcher.find()) {
             return analysisConditionFromWhereClause(matcher.group());
-        }else {
+        } else {
             log.warn("not found where clause");
             QueryCondition queryCondition = new QueryCondition();
             analysisOrderedAndLimit(sql, queryCondition);
@@ -439,7 +438,7 @@ public class CrossSourceSQLParser {
         }
     }
 
-    public static String analysisOrderedAndLimit(String clause, QueryCondition queryCondition){
+    public static String analysisOrderedAndLimit(String clause, QueryCondition queryCondition) {
         // 解析order by子句
         Matcher orderedMatcher = FIND_ORDERED_CLAUSE.matcher(clause);
         if (orderedMatcher.find()) {

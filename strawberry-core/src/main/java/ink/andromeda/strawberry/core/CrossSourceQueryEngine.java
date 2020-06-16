@@ -95,7 +95,9 @@ public class CrossSourceQueryEngine {
     public QueryResults executeQuery(String sql) throws Exception {
         sql = checkSQL(sql);
         log.debug("start query: {}", sql);
+        // 解析sql表关系
         LinkRelation linkRelation = analysisRelation(sql);
+        // 解析查询条件
         QueryCondition queryCondition = analysisConditionFromSQL(sql);
         return executeQuery(linkRelation, queryCondition);
     }

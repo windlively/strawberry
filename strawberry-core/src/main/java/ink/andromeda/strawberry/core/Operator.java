@@ -10,12 +10,12 @@ import java.util.Objects;
 
 public enum Operator {
 
-    EQ("=", "等于"){
+    EQ("=", "等于") {
         @Override
         public boolean isTrue(Object left, Object... right) {
             Objects.requireNonNull(left);
             Objects.requireNonNull(right);
-            if(right.length != 1) {
+            if (right.length != 1) {
                 throw new IllegalArgumentException("operator '=' left value length is 1");
             }
             return objectComparator.compare(left, right[0]) == 0;
@@ -26,7 +26,7 @@ public enum Operator {
         public boolean isTrue(Object left, Object... right) {
             Objects.requireNonNull(left);
             Objects.requireNonNull(right);
-            if(right.length != 1) {
+            if (right.length != 1) {
                 throw new IllegalArgumentException("operator '<' left value length is 1");
             }
             return objectComparator.compare(left, right[0]) < 0;
@@ -37,18 +37,18 @@ public enum Operator {
         public boolean isTrue(Object left, Object... right) {
             Objects.requireNonNull(left);
             Objects.requireNonNull(right);
-            if(right.length != 1) {
+            if (right.length != 1) {
                 throw new IllegalArgumentException("operator '<=' left value length is 1");
             }
             return objectComparator.compare(left, right[0]) <= 0;
         }
     },
-    GT(">","大于"){
+    GT(">", "大于") {
         @Override
         public boolean isTrue(Object left, Object... right) {
             Objects.requireNonNull(left);
             Objects.requireNonNull(right);
-            if(right.length != 1) {
+            if (right.length != 1) {
                 throw new IllegalArgumentException("operator '>' left value length is 1");
             }
             return objectComparator.compare(left, right[0]) > 0;
@@ -59,18 +59,18 @@ public enum Operator {
         public boolean isTrue(Object left, Object... right) {
             Objects.requireNonNull(left);
             Objects.requireNonNull(right);
-            if(right.length != 1) {
+            if (right.length != 1) {
                 throw new IllegalArgumentException("operator '>=' left value length is 1");
             }
             return objectComparator.compare(left, right[0]) >= 0;
         }
     },
-    NE("!=", "不等于"){
+    NE("!=", "不等于") {
         @Override
         public boolean isTrue(Object left, Object... right) {
             Objects.requireNonNull(left);
             Objects.requireNonNull(right);
-            if(right.length != 1) {
+            if (right.length != 1) {
                 throw new IllegalArgumentException("operator '!=' left value length is 1");
             }
             return objectComparator.compare(left, right[0]) != 0;
@@ -83,53 +83,53 @@ public enum Operator {
         this.code = code;
     }
 
-    public String code(){
+    public String code() {
         return code;
     }
 
     public abstract boolean isTrue(Object left, Object... right);
 
-    private static void requiredNonNull(Object... objects){
+    private static void requiredNonNull(Object... objects) {
         Assert.notNull(objects);
     }
 
-    public static Operator of(String code){
-        for (Operator op : Operator.values()){
-            if(op.code.equals(code))
+    public static Operator of(String code) {
+        for (Operator op : Operator.values()) {
+            if (op.code.equals(code))
                 return op;
         }
         throw new IllegalArgumentException("unknown operator code: " + code);
     }
 
     public static final Comparator<Object> objectComparator = (o1, o2) -> {
-        if(o1 == null)
+        if (o1 == null)
             o1 = 0;
-        if(o2 == null)
+        if (o2 == null)
             o2 = 0;
-        if(o1 instanceof Number){
+        if (o1 instanceof Number) {
             BigDecimal leftVal = new BigDecimal(o1.toString());
             BigDecimal rightVal;
             try {
                 rightVal = GeneralTools.conversionService().convert(o2, BigDecimal.class);
                 return leftVal.compareTo(rightVal);
-            }catch (Exception ex){
-                throw new IllegalArgumentException("left value '" + o1 + "' is number but right '" + o2 +"' could not convert to a number: " + ex.getMessage(), ex);
+            } catch (Exception ex) {
+                throw new IllegalArgumentException("left value '" + o1 + "' is number but right '" + o2 + "' could not convert to a number: " + ex.getMessage(), ex);
             }
         }
 
-        if(o1 instanceof String) {
-            if(!(o2 instanceof String)){
-                throw new IllegalArgumentException("left value '" + o1 + "' is string but right '" + o2 +"' not");
+        if (o1 instanceof String) {
+            if (!(o2 instanceof String)) {
+                throw new IllegalArgumentException("left value '" + o1 + "' is string but right '" + o2 + "' not");
             }
             return ((String) o1).compareTo((String) o2);
         }
 
-        if(o1 instanceof Date){
+        if (o1 instanceof Date) {
             Date rightDate;
             try {
                 rightDate = GeneralTools.conversionService().convert(o2, Date.class);
-            }catch (Exception ex){
-                throw new IllegalArgumentException("left value '" + o1 + "' is date type but right '" + o2 +"' could not convert to a date: " + ex.getMessage(), ex);
+            } catch (Exception ex) {
+                throw new IllegalArgumentException("left value '" + o1 + "' is date type but right '" + o2 + "' could not convert to a date: " + ex.getMessage(), ex);
             }
             return ((Date) o1).compareTo(rightDate);
         }
