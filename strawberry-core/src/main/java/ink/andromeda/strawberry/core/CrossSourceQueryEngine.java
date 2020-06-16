@@ -95,26 +95,9 @@ public class CrossSourceQueryEngine {
     public QueryResults executeQuery(String sql) throws Exception {
         sql = checkSQL(sql);
         log.debug("start query: {}", sql);
-        StopWatch stopWatch = new StopWatch();
-        stopWatch.start("parser sql");
         LinkRelation linkRelation = analysisRelation(sql);
-        QueryCondition queryCondition ;
-        try {
-             queryCondition = analysisConditionFromSQL(sql);
-        }catch (Exception ex){
-            log.warn(ex.getMessage());
-            queryCondition = new QueryCondition();
-            analysisOrderedAndLimit(sql, queryCondition);
-            queryCondition.conditions(Collections.emptyMap());
-        }
-
-
-        stopWatch.stop();
-        stopWatch.start("execute");
-        QueryResults results = executeQuery(linkRelation, queryCondition);
-        stopWatch.stop();
-        log.debug(stopWatch.prettyPrint());
-        return results;
+        QueryCondition queryCondition = analysisConditionFromSQL(sql);
+        return executeQuery(linkRelation, queryCondition);
     }
 
     public QueryResults executeQuery(LinkRelation linkRelation, QueryCondition queryCondition) throws Exception {

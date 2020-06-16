@@ -430,8 +430,13 @@ public class CrossSourceSQLParser {
         Matcher matcher = FIND_WHERE_CLAUSE_REG.matcher(sql);
         if (matcher.find()) {
             return analysisConditionFromWhereClause(matcher.group());
+        }else {
+            log.warn("not found where clause");
+            QueryCondition queryCondition = new QueryCondition();
+            analysisOrderedAndLimit(sql, queryCondition);
+            queryCondition.conditions(Collections.emptyMap());
+            return queryCondition;
         }
-        throw new IllegalArgumentException("not found where clause");
     }
 
     public static String analysisOrderedAndLimit(String clause, QueryCondition queryCondition){
