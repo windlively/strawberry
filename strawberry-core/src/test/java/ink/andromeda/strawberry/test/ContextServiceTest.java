@@ -222,7 +222,7 @@ public class ContextServiceTest {
 
     @Test
     public void joinTest2() throws Exception {
-        String sql = "select ta.f1 as 字段1, tc.f1 '字段2  杀杀杀', tb.f2 字段8 from test.test.join_test_a ta " +
+        String sql = "select ta.f1 as 字段1, tc.f1 '字段2', tb.f2 字段8 from test.test.join_test_a ta " +
                      " right join test.test.join_test_b tb on ta.f1=tb.f2 " +
                      // " right join test.test.join_test_a td on td.f1=tb.f2 " +
                      " left join test.test.join_test_c tc on tc.f1=tb.f1 " +
