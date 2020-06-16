@@ -18,7 +18,7 @@ import static ink.andromeda.strawberry.tools.GeneralTools.testDataSourceConnecti
 
 @Configuration
 @EnableConfigurationProperties(StrawberryProperties.class)
-@ComponentScan("ink.andromeda.strawberry")
+@ComponentScan("ink.andromeda.strawberry.context")
 @Slf4j
 public class StrawberryAutoConfiguration {
 
